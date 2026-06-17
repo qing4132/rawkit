@@ -451,3 +451,119 @@ def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
     assert len(short_row) < len(long_row) - 20, (
         f"short row got inflated:\n  short={len(short_row)}\n  long ={len(long_row)}"
     )
+
+
+# --- header sort indicator + cell color (via direct _render_table call) ----
+
+def _capture_render(records, sort_key, reverse, monkeypatch, capsys, force_color=True):
+    """Render via _render_table with color forced on/off, capture stdout."""
+    from rawkit import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_color_enabled", lambda: force_color)
+    cli_mod._render_table(records, sort_key=sort_key, reverse=reverse)
+    return capsys.readouterr().out
+
+
+def test_header_marks_active_sort_column_with_arrow(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "iso": 100,
+             "fnumber": 2.8, "shutter": 0.004, "focal": 50}]
+    out = _capture_render(recs, SortKey.datetime, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=False)
+    header = out.splitlines()[0]
+    # ascending arrow appears on the datetime column header
+    assert "datetime\u2191" in header
+    # other headers don't get an arrow
+    assert "iso\u2191" not in header
+    assert "iso\u2193" not in header
+
+
+def test_header_arrow_flips_on_reverse(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "iso": 100}]
+    out = _capture_render(recs, SortKey.iso, reverse=True,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=False)
+    header = out.splitlines()[0]
+    assert "iso\u2193" in header
+    assert "iso\u2191" not in header
+
+
+def test_header_arrow_shows_even_without_color(monkeypatch, capsys) -> None:
+    """The arrow is information (which sort), so it survives NO_COLOR / pipe."""
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "iso": 100}]
+    out = _capture_render(recs, SortKey.iso, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=False)
+    assert "iso\u2191" in out
+    # but no ANSI escape sequences anywhere
+    assert "\x1b[" not in out
+
+
+def test_sort_by_date_or_time_highlights_datetime_column(monkeypatch, capsys) -> None:
+    """date / time sort keys aren't visible columns; they highlight datetime."""
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00"}]
+    out = _capture_render(recs, SortKey.date, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=False)
+    assert "datetime\u2191" in out.splitlines()[0]
+
+
+def test_bias_nonzero_gets_yellow_when_color_on(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "bias": -2.0}]
+    out = _capture_render(recs, SortKey.file, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
+    # Find the data row (line after header)
+    data_row = out.splitlines()[1]
+    assert "\x1b[33m" in data_row  # yellow opener somewhere on the row
+
+
+def test_bias_zero_is_not_colored(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "bias": 0}]
+    out = _capture_render(recs, SortKey.file, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
+    data_row = out.splitlines()[1]
+    assert "\x1b[33m" not in data_row  # no yellow
+
+
+def test_high_iso_gets_red(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "iso": 6400}]
+    out = _capture_render(recs, SortKey.file, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
+    assert "\x1b[31m" in out.splitlines()[1]
+
+
+def test_low_iso_is_not_red(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "iso": 800}]
+    out = _capture_render(recs, SortKey.file, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
+    assert "\x1b[31m" not in out.splitlines()[1]
+
+
+def test_no_color_when_color_disabled(monkeypatch, capsys) -> None:
+    from rawkit.cli import SortKey
+    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00",
+             "iso": 12800, "bias": -2.0}]
+    out = _capture_render(recs, SortKey.file, reverse=False,
+                          monkeypatch=monkeypatch, capsys=capsys, force_color=False)
+    # NO ansi anywhere, even with edge-case values
+    assert "\x1b[" not in out
+
+
+def test_no_color_env_var_disables_color(monkeypatch) -> None:
+    """no-color.org compliance: any value of NO_COLOR disables color."""
+    import os
+    from rawkit.cli import _color_enabled
+    # Force isatty True via monkeypatch on sys.stdout
+    class FakeStdout:
+        def isatty(self_inner): return True
+    monkeypatch.setattr("rawkit.cli.sys.stdout", FakeStdout())
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert _color_enabled() is False
+    monkeypatch.setenv("NO_COLOR", "")   # even empty value disables
+    assert _color_enabled() is False
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    assert _color_enabled() is True

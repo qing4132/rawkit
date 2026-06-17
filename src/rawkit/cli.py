@@ -230,36 +230,87 @@ _FORMATTERS = {
 }
 
 _BOLD = "\x1b[1m"
+_CYAN = "\x1b[36m"
+_YELLOW = "\x1b[33m"
+_RED = "\x1b[31m"
 _RESET = "\x1b[0m"
 
 
-def _render_table(records: Iterable[dict[str, Any]]) -> None:
+def _color_enabled() -> bool:
+    """True iff we should emit ANSI color/style codes.
+
+    Honors the no-color.org standard: any value of NO_COLOR (even empty)
+    disables color, regardless of TTY. Also disables on non-TTY (pipes).
+    """
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    return sys.stdout.isatty()
+
+
+# Maps a sort key to the visible header it should highlight. Time-precision
+# variants (date, time) point at the `datetime` column — it's the closest
+# visible representation of what the user sorted by.
+_SORT_HEADER_MAP: dict[str, str] = {
+    "file":     "file",
+    "datetime": "datetime",
+    "date":     "datetime",
+    "time":     "datetime",
+    "model":    "model",
+    "lens":     "lens",
+    "focal":    "focal",
+    "aperture": "aperture",
+    "shutter":  "shutter",
+    "bias":     "bias",
+    "iso":      "iso",
+}
+
+
+def _render_table(
+    records: Iterable[dict[str, Any]],
+    sort_key: SortKey,
+    reverse: bool,
+) -> None:
     """Render an aligned, content-width table on stdout.
 
     We intentionally do NOT fit-to-terminal: columns are sized to the widest
     value so no data is ever truncated. Output may exceed the terminal width;
     in that case `| less -S` (horizontal scroll) is the standard escape hatch.
 
-    When stdout is a TTY we bold the header so the eye has an anchor; data
-    rows stay plain. No color or zebra striping — those tried and abandoned.
+    Two pieces of color when TTY (off via NO_COLOR or pipe):
+    - the column header for the active sort key gets bold+cyan with an
+      asc/desc arrow (the arrow itself shows even without color)
+    - cells get a one-color highlight when the value is photographer-relevant
+      and edge-case-ish: bias != 0 is yellow, iso >= 6400 is red
     """
     records = list(records)
     if not records:
         return
 
     rows: list[tuple[str, ...]] = []
+    raw_cells: list[tuple[Any, ...]] = []  # parallel to rows, holds raw values for color tests
     for r in records:
         row: list[str] = []
+        raw: list[Any] = []
         for _header, key, _align in _TABLE_COLUMNS:
             if key == "_filename":
                 row.append(Path(r.get("path", "")).name)
+                raw.append(None)
             elif key in _FORMATTERS:
                 row.append(_FORMATTERS[key](r.get(key)))
+                raw.append(r.get(key))
             else:
                 row.append(str(r.get(key) or "-"))
+                raw.append(r.get(key))
         rows.append(tuple(row))
+        raw_cells.append(tuple(raw))
 
-    headers = tuple(h for h, _k, _a in _TABLE_COLUMNS)
+    # Build headers — the active sort key's header gets an arrow suffix.
+    arrow = "\u2193" if reverse else "\u2191"  # ↓ desc / ↑ asc
+    active_header_name = _SORT_HEADER_MAP[sort_key.value]
+    headers: list[str] = []
+    for h, _k, _a in _TABLE_COLUMNS:
+        headers.append(h + arrow if h == active_header_name else h)
+
     widths = [max(len(s) for s in col) for col in zip(headers, *rows)]
     file_names = [headers[0], *(row[0] for row in rows)]
     normal_names = [n for n in file_names if len(n) <= _FILE_COL_SOFT_CAP]
@@ -268,22 +319,46 @@ def _render_table(records: Iterable[dict[str, Any]]) -> None:
     else:
         widths[0] = _FILE_COL_SOFT_CAP
 
-    is_tty = sys.stdout.isatty()
+    use_color = _color_enabled()
 
     def fmt_cell(text: str, width: int, align: str) -> str:
         return f"{text:>{width}}" if align == "r" else f"{text:<{width}}"
 
-    header_line = "  ".join(
-        fmt_cell(h, widths[i], _TABLE_COLUMNS[i][2]) for i, h in enumerate(headers)
-    )
-    if is_tty:
-        header_line = f"{_BOLD}{header_line}{_RESET}"
-    typer.echo(header_line)
+    def wrap(s: str, codes: str) -> str:
+        # ANSI wrap a pre-padded cell. The codes don't change visible width;
+        # terminals render them as zero-width. So padding-then-wrap is safe.
+        return f"{codes}{s}{_RESET}" if use_color and codes else s
 
-    for row in rows:
-        typer.echo("  ".join(
-            fmt_cell(row[i], widths[i], _TABLE_COLUMNS[i][2]) for i in range(len(row))
-        ))
+    # Header line: bold+cyan on the active sort column, plain on others.
+    header_cells: list[str] = []
+    for i, h in enumerate(headers):
+        padded = fmt_cell(h, widths[i], _TABLE_COLUMNS[i][2])
+        codes = _BOLD + _CYAN if h == active_header_name + arrow else _BOLD
+        header_cells.append(wrap(padded, codes))
+    typer.echo("  ".join(header_cells), color=use_color)
+
+    # Data rows: cell-level color for bias/iso edge cases.
+    for row, raw in zip(rows, raw_cells):
+        cells: list[str] = []
+        for i, text in enumerate(row):
+            padded = fmt_cell(text, widths[i], _TABLE_COLUMNS[i][2])
+            key = _TABLE_COLUMNS[i][1]
+            codes = ""
+            if use_color:
+                if key == "bias":
+                    try:
+                        if raw[i] is not None and float(raw[i]) != 0:
+                            codes = _YELLOW
+                    except (TypeError, ValueError):
+                        pass
+                elif key == "iso":
+                    try:
+                        if raw[i] is not None and float(raw[i]) >= 6400:
+                            codes = _RED
+                    except (TypeError, ValueError):
+                        pass
+            cells.append(wrap(padded, codes))
+        typer.echo("  ".join(cells), color=use_color)
 
 
 def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
@@ -415,4 +490,4 @@ def ls(
     if as_json:
         _emit_jsonl(records)
     else:
-        _render_table(records)
+        _render_table(records, sort_key=sort, reverse=reverse)
