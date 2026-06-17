@@ -157,6 +157,72 @@ def test_subsecond_in_datetime_literal() -> None:
     assert _filter('datetime>"2024-10-27 17:09:43.500"', [rec_a, rec_b]) == [rec_b]
 
 
+# --- mixed-precision compare (SQL start-of-unit semantics) -----------------
+
+def test_short_time_literal_eq_matches_unpadded_record() -> None:
+    """`time=="16:00"` must match record `time="16:00:00"` (start of minute)."""
+    rec = {**R_SONY, "time": "16:00:00"}
+    assert _filter('time=="16:00"', [rec]) == [rec]
+
+
+def test_short_time_literal_eq_does_not_match_into_minute() -> None:
+    """But `time=="16:00"` does NOT match `time="16:00:05"` — start-of-minute
+    means exactly 16:00:00, not 'any time in the minute'. Use a range for
+    that intent (or use a coarser field if one exists)."""
+    rec = {**R_SONY, "time": "16:00:05"}
+    assert _filter('time=="16:00"', [rec]) == []
+
+
+def test_short_time_literal_lte_matches_at_boundary() -> None:
+    """`time<="16:00"` should include `time="16:00:00"` exactly."""
+    at  = {**R_SONY, "time": "16:00:00", "path": "/x/at.ARW"}
+    after = {**R_SONY, "time": "16:00:01", "path": "/x/after.ARW"}
+    before = {**R_SONY, "time": "15:59:59", "path": "/x/before.ARW"}
+    assert _filter('time<="16:00"', [at, after, before]) == [at, before]
+
+
+def test_short_time_literal_lt_excludes_boundary() -> None:
+    """`time<"16:00"` excludes `time="16:00:00"` (strict before)."""
+    at = {**R_SONY, "time": "16:00:00"}
+    just_before = {**R_SONY, "time": "15:59:59.999"}
+    assert _filter('time<"16:00"', [at, just_before]) == [just_before]
+
+
+def test_short_time_literal_gte_includes_boundary_and_subsec() -> None:
+    rec_at  = {**R_SONY, "time": "16:00:00"}
+    rec_sub = {**R_SONY, "time": "16:00:00.048"}
+    rec_b   = {**R_SONY, "time": "15:59:59"}
+    assert _filter('time>="16:00"', [rec_at, rec_sub, rec_b]) == [rec_at, rec_sub]
+
+
+def test_short_datetime_literal_eq_pads_to_midnight() -> None:
+    """`datetime=="2024-01-02"` matches only the exact midnight that day,
+    matching SQL's implicit-cast semantics."""
+    midnight = {**R_SONY, "datetime": "2024-01-02 00:00:00"}
+    noon     = {**R_SONY, "datetime": "2024-01-02 12:00:00"}
+    assert _filter('datetime=="2024-01-02"', [midnight, noon]) == [midnight]
+
+
+def test_whole_day_via_range_idiom() -> None:
+    """SQL idiom for 'any time on 2024-01-02': use a half-open range."""
+    same_day_morn = {**R_SONY, "datetime": "2024-01-02 06:00:00", "path": "/x/m"}
+    same_day_eve  = {**R_SONY, "datetime": "2024-01-02 22:00:00", "path": "/x/e"}
+    next_day      = {**R_SONY, "datetime": "2024-01-03 00:00:00", "path": "/x/n"}
+    out = _filter(
+        'datetime>="2024-01-02" and datetime<"2024-01-03"',
+        [same_day_morn, same_day_eve, next_day],
+    )
+    assert out == [same_day_morn, same_day_eve]
+
+
+def test_whole_day_via_date_field_idiom() -> None:
+    """The simpler way (only because we have a separate `date` field):
+    just compare on `date` directly."""
+    same_day = {**R_SONY, "date": "2024-01-02"}
+    next_day = {**R_SONY, "date": "2024-01-03"}
+    assert _filter('date=="2024-01-02"', [same_day, next_day]) == [same_day]
+
+
 # --- logical combinators + precedence ---------------------------------------
 
 def test_and_combines() -> None:

@@ -104,6 +104,38 @@ def _record_field(record: dict[str, Any], field: str) -> Any:
     return record.get(field)
 
 
+# --- precision canonicalization --------------------------------------------
+# Time/datetime comparisons must work across mixed precision: literals can be
+# minute-only ('16:00'), records can be second-only ('16:00:00') or sub-second
+# ('16:00:00.048'). We normalize both sides to 'HH:MM:SS.NNN' before comparing,
+# matching SQL's start-of-unit semantics: '16:00' means the very start of that
+# minute, '2024-01-02' means midnight that day. To express 'any time in that
+# minute/day' the user writes a range or uses the coarser-precision field
+# (e.g. `date=="2024-01-02"` instead of `datetime=="2024-01-02"`).
+
+def _canon_time(s: str) -> str:
+    """Pad 'HH:MM' or 'HH:MM:SS' or 'HH:MM:SS.NNN' to 'HH:MM:SS.NNN'.
+    Missing seconds → ':00'; missing sub-second → '.000'."""
+    if "." in s:
+        head, _, frac = s.partition(".")
+    else:
+        head, frac = s, "000"
+    if len(head) == 5:  # "HH:MM" → pad seconds
+        head = head + ":00"
+    return head + "." + frac
+
+
+def _canon_datetime(s: str) -> str:
+    """Pad a date / datetime literal to 'YYYY-MM-DD HH:MM:SS.NNN'.
+    Accepts the same shapes as the DATETIME and DATE grammar tokens."""
+    if " " not in s and "T" not in s:
+        # date-only: pad to start of day
+        return s + " 00:00:00.000"
+    s = s.replace("T", " ")
+    date_part, time_part = s.split(" ", 1)
+    return date_part + " " + _canon_time(time_part)
+
+
 def _cmp_op(op: str) -> Callable[[Any, Any], bool]:
     return {
         ">":  lambda a, b: a is not None and a >  b,
@@ -195,12 +227,28 @@ class _Builder(Transformer):
                 return op_fn(lhs_b, literal)
             return pred_bool
 
-        # string / date / time → string-compare. Both sides lowercased for ==/!= on strings.
+        # For time/datetime fields, normalize BOTH the literal (once) and the
+        # record value (per row) to a canonical 'HH:MM:SS.NNN' / 'YYYY-MM-DD
+        # HH:MM:SS.NNN' string. This is what every mainstream SQL engine does
+        # under the hood for mixed-precision compares.
+        if field_name in _TIME_FIELDS:
+            literal = _canon_time(literal)
+            normalize: Callable[[str], str] | None = _canon_time
+        elif field_name in _DATETIME_FIELDS:
+            literal = _canon_datetime(literal)
+            normalize = _canon_datetime
+        else:
+            normalize = None
+
+        # string / date (raw) / time / datetime → string-compare
         def pred_str(rec: dict[str, Any]) -> bool:
             lhs = _record_field(rec, field_name)
             if lhs is None:
                 return op == "!="  # missing != anything is True
-            return op_fn(str(lhs), literal)
+            lhs_s = str(lhs)
+            if normalize is not None:
+                lhs_s = normalize(lhs_s)
+            return op_fn(lhs_s, literal)
         return pred_str
 
     # match: FIELD ~ STRING  (case-insensitive substring)
