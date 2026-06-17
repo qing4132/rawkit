@@ -508,51 +508,6 @@ def test_sort_by_date_or_time_highlights_datetime_column(monkeypatch, capsys) ->
     assert "datetime\u2191" in out.splitlines()[0]
 
 
-def test_bias_nonzero_gets_yellow_when_color_on(monkeypatch, capsys) -> None:
-    from rawkit.cli import SortKey
-    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "bias": -2.0}]
-    out = _capture_render(recs, SortKey.file, reverse=False,
-                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
-    # Find the data row (line after header)
-    data_row = out.splitlines()[1]
-    assert "\x1b[33m" in data_row  # yellow opener somewhere on the row
-
-
-def test_bias_zero_is_not_colored(monkeypatch, capsys) -> None:
-    from rawkit.cli import SortKey
-    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "bias": 0}]
-    out = _capture_render(recs, SortKey.file, reverse=False,
-                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
-    data_row = out.splitlines()[1]
-    assert "\x1b[33m" not in data_row  # no yellow
-
-
-def test_high_iso_gets_red(monkeypatch, capsys) -> None:
-    from rawkit.cli import SortKey
-    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "iso": 6400}]
-    out = _capture_render(recs, SortKey.file, reverse=False,
-                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
-    assert "\x1b[31m" in out.splitlines()[1]
-
-
-def test_low_iso_is_not_red(monkeypatch, capsys) -> None:
-    from rawkit.cli import SortKey
-    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00", "iso": 800}]
-    out = _capture_render(recs, SortKey.file, reverse=False,
-                          monkeypatch=monkeypatch, capsys=capsys, force_color=True)
-    assert "\x1b[31m" not in out.splitlines()[1]
-
-
-def test_no_color_when_color_disabled(monkeypatch, capsys) -> None:
-    from rawkit.cli import SortKey
-    recs = [{"path": "/x/a.ARW", "datetime": "2024-01-01 00:00:00",
-             "iso": 12800, "bias": -2.0}]
-    out = _capture_render(recs, SortKey.file, reverse=False,
-                          monkeypatch=monkeypatch, capsys=capsys, force_color=False)
-    # NO ansi anywhere, even with edge-case values
-    assert "\x1b[" not in out
-
-
 def test_no_color_env_var_disables_color(monkeypatch) -> None:
     """no-color.org compliance: any value of NO_COLOR disables color."""
     import os

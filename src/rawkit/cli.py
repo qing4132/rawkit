@@ -231,8 +231,6 @@ _FORMATTERS = {
 
 _BOLD = "\x1b[1m"
 _CYAN = "\x1b[36m"
-_YELLOW = "\x1b[33m"
-_RED = "\x1b[31m"
 _RESET = "\x1b[0m"
 
 
@@ -276,33 +274,27 @@ def _render_table(
     value so no data is ever truncated. Output may exceed the terminal width;
     in that case `| less -S` (horizontal scroll) is the standard escape hatch.
 
-    Two pieces of color when TTY (off via NO_COLOR or pipe):
-    - the column header for the active sort key gets bold+cyan with an
-      asc/desc arrow (the arrow itself shows even without color)
-    - cells get a one-color highlight when the value is photographer-relevant
-      and edge-case-ish: bias != 0 is yellow, iso >= 6400 is red
+    When stdout is a TTY (and NO_COLOR isn't set) we highlight the active
+    sort column's header with bold+cyan and an ASC/DESC arrow. We do NOT
+    color data cells — cell coloring would impose a value judgment on
+    which numbers count as 'unusual' (high ISO bad? non-zero bias notable?
+    depends on the photographer's workflow).
     """
     records = list(records)
     if not records:
         return
 
     rows: list[tuple[str, ...]] = []
-    raw_cells: list[tuple[Any, ...]] = []  # parallel to rows, holds raw values for color tests
     for r in records:
         row: list[str] = []
-        raw: list[Any] = []
         for _header, key, _align in _TABLE_COLUMNS:
             if key == "_filename":
                 row.append(Path(r.get("path", "")).name)
-                raw.append(None)
             elif key in _FORMATTERS:
                 row.append(_FORMATTERS[key](r.get(key)))
-                raw.append(r.get(key))
             else:
                 row.append(str(r.get(key) or "-"))
-                raw.append(r.get(key))
         rows.append(tuple(row))
-        raw_cells.append(tuple(raw))
 
     # Build headers — the PRIMARY sort key's header gets an arrow suffix
     # (secondary keys are not visually marked, to avoid header clutter).
@@ -339,27 +331,12 @@ def _render_table(
         header_cells.append(wrap(padded, codes))
     typer.echo("  ".join(header_cells), color=use_color)
 
-    # Data rows: cell-level color for bias/iso edge cases.
-    for row, raw in zip(rows, raw_cells):
-        cells: list[str] = []
-        for i, text in enumerate(row):
-            padded = fmt_cell(text, widths[i], _TABLE_COLUMNS[i][2])
-            key = _TABLE_COLUMNS[i][1]
-            codes = ""
-            if use_color:
-                if key == "bias":
-                    try:
-                        if raw[i] is not None and float(raw[i]) != 0:
-                            codes = _YELLOW
-                    except (TypeError, ValueError):
-                        pass
-                elif key == "iso":
-                    try:
-                        if raw[i] is not None and float(raw[i]) >= 6400:
-                            codes = _RED
-                    except (TypeError, ValueError):
-                        pass
-            cells.append(wrap(padded, codes))
+    # Data rows: plain text, no cell-level coloring.
+    for row in rows:
+        cells = [
+            fmt_cell(row[i], widths[i], _TABLE_COLUMNS[i][2])
+            for i in range(len(row))
+        ]
         typer.echo("  ".join(cells), color=use_color)
 
 
