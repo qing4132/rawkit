@@ -22,3 +22,7 @@ htmlcov/
 # rawkit specific
 thumbs/
 exports/
+
+# Local RAW samples for dogfood/testing (never commit — large + may contain
+# personal/downloaded files). See README: RAWKIT_TEST_SAMPLES env var.
+samples/
