@@ -194,15 +194,18 @@ def _fmt_bias(v: Any) -> str:
 
 _TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # (header, normalized key, alignment)  alignment: 'l' = left, 'r' = right
+    # Order: identity → framing (lens + focal) → exposure quartet.
+    # ISO last on purpose: it has the widest range (100..102400) so its
+    # right-aligned magnitude is easy to scan along the table's right edge.
     ("file",     "_filename", "l"),
     ("date",     "date",      "l"),
     ("model",    "model",     "l"),
     ("lens",     "lens",      "l"),
-    ("iso",      "iso",       "r"),
+    ("focal",    "focal",     "r"),
     ("aperture", "fnumber",   "r"),
     ("shutter",  "shutter",   "r"),
     ("bias",     "bias",      "r"),
-    ("focal",    "focal",     "r"),
+    ("iso",      "iso",       "r"),
 )
 
 _FORMATTERS = {
@@ -215,7 +218,6 @@ _FORMATTERS = {
 }
 
 _BOLD = "\x1b[1m"
-_DIM_CYAN = "\x1b[36m"
 _RESET = "\x1b[0m"
 
 
@@ -225,7 +227,9 @@ def _render_table(records: Iterable[dict[str, Any]]) -> None:
     We intentionally do NOT fit-to-terminal: columns are sized to the widest
     value so no data is ever truncated. Output may exceed the terminal width;
     in that case `| less -S` (horizontal scroll) is the standard escape hatch.
-    Color/bold are emitted only when stdout is a TTY.
+
+    When stdout is a TTY we bold the header so the eye has an anchor; data
+    rows stay plain. No color or zebra striping — those tried and abandoned.
     """
     records = list(records)
     if not records:
@@ -245,10 +249,6 @@ def _render_table(records: Iterable[dict[str, Any]]) -> None:
 
     headers = tuple(h for h, _k, _a in _TABLE_COLUMNS)
     widths = [max(len(s) for s in col) for col in zip(headers, *rows)]
-    # Size the file column to the widest "normal" filename. Names longer
-    # than the soft cap don't contribute to the width; they overflow on
-    # their own row and naturally push that row's other columns rightward,
-    # leaving the bulk of the table tight.
     file_names = [headers[0], *(row[0] for row in rows)]
     normal_names = [n for n in file_names if len(n) <= _FILE_COL_SOFT_CAP]
     if normal_names:
@@ -259,28 +259,19 @@ def _render_table(records: Iterable[dict[str, Any]]) -> None:
     is_tty = sys.stdout.isatty()
 
     def fmt_cell(text: str, width: int, align: str) -> str:
-        # When text is longer than `width`, Python's format spec leaves it
-        # untouched (no truncation) and adds no padding. That is exactly the
-        # "overflow this row only" behavior we want for long filenames.
         return f"{text:>{width}}" if align == "r" else f"{text:<{width}}"
 
-    # Header
-    header_cells = [
+    header_line = "  ".join(
         fmt_cell(h, widths[i], _TABLE_COLUMNS[i][2]) for i, h in enumerate(headers)
-    ]
-    header_line = "  ".join(header_cells)
+    )
     if is_tty:
         header_line = f"{_BOLD}{header_line}{_RESET}"
     typer.echo(header_line)
 
     for row in rows:
-        cells = [
-            fmt_cell(row[i], widths[i], _TABLE_COLUMNS[i][2])
-            for i in range(len(row))
-        ]
-        if is_tty:
-            cells[0] = f"{_DIM_CYAN}{cells[0]}{_RESET}"
-        typer.echo("  ".join(cells))
+        typer.echo("  ".join(
+            fmt_cell(row[i], widths[i], _TABLE_COLUMNS[i][2]) for i in range(len(row))
+        ))
 
 
 def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
