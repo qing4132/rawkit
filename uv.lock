@@ -98,6 +98,7 @@ name = "rawkit"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -107,7 +108,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "typer", specifier = ">=0.26.7" }]
+requires-dist = [
+    { name = "rich", specifier = ">=15.0.0" },
+    { name = "typer", specifier = ">=0.26.7" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.0" }]
