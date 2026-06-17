@@ -1,105 +1,112 @@
 # rawkit · RAW 摄影的命令行瑞士军刀
 
 > 给本地 RAW 文件做批处理 / metadata / sidecar / 浏览的现代 Python CLI。
-> **不替代 LrC**,做 LrC 不做的事——脚本化的命令行盒子,LrC 旁边那一格。
+> **不替代 Lightroom Classic，做 LrC 不做的事**——脚本化的命令行盒子，LrC 旁边那一格。
+
+> ⚠️ 状态:**v0.0 / 零代码**。本仓库目前只有这份设计文档。下一步是 v0.1 MVP。
+
+---
+
+## 硬约束(优先级最高,凌驾本文其他一切内容)
+
+> 这些是项目的不可越线规则。下面任何章节(命令清单、五年弧线、施工顺序…)若与本节冲突,以本节为准。作者**随时可能追加新的强约束**,新约束追加到本节末尾。
+
+1. **内测之前绝不对外发布**。"稳定"不只指性能,更指**命令名、子命令、flag、API 形状不再变化**。在此之前:
+   - 使用**内部版本号**(`0.0.x` / `0.1.0a1` 之类 pre-release),不打 `1.0`、不发 PyPI、不写 Homebrew Formula、不发推不发博客
+   - 一切都可以推翻重做,包括本 README 里所有已拍板的决策
+   - 内测圈 = 作者自己 + 几个朋友,够了
+2. **RAW 只读是核心约束**。在整个内测期间,直到出现某个"非做不可"的版本(但愿永远不出现),工具**绝不对原始 RAW 文件做任何写操作**——不改像素、不写 EXIF、不嵌 XMP、不 touch 时间戳。允许的写操作只发生在:
+   - **派生文件**(thumb / export 的输出)
+   - **sidecar 文件**(`.xmp` / `.json` 等独立于 RAW 的伴生文件)
+   - **文件系统级 rename**(`mv`,改文件名/路径,不改 RAW 字节内容)——边缘允许,但默认 `--dry-run`
+3. **一切 Python 相关用 [`uv`](https://github.com/astral-sh/uv) 管理**。依赖、虚拟环境、运行、分发、安装、锁文件全走 uv,不混 `pip` / `pipx` / `poetry` / `conda`。
+4. **最大限度遵循 Unix 软件哲学**。Do one thing well;靠管道组合;文本流作为通用接口;**不重复造现有标准工具能做好的事**。具体推论:
+   - 如果 `mv` / `cp` / `find` / `xargs` / `jq` / `column` / `sort` 已经能干的事,**不在 rawkit 里复刻一份**
+   - 每个子命令只做一件事、做好;靠 stdout/stdin + JSON/text 让用户自己组合
+   - 拒绝"全家桶"诱惑——撞到"我们也加个 X 吧"的念头时,先问"标准 Unix 工具能做吗?"
+   - **直接后果**:`rawkit rename` 从 v0.1 砍掉(`rawkit ls --json | jq | xargs mv` 就够了);未来任何看似有用的命令都要过这道筛
+5. **尽一切可能减轻用户心智负担。本条凌驾于 #4 之上**。当 Unix 纯洁性和"用户少想一秒"冲突时,**永远选后者**。具体推论:
+   - 默认值要"绝大多数情况下不用想":`thumb` 默认输出 `./thumbs/`、`rename` 类操作默认 `--dry-run`、列表默认按时间倒序…
+   - **人话错误信息**:"file not found: foo.ARW" 而不是 traceback;"exiftool 没装,`brew install exiftool` 即可"而不是 `FileNotFoundError: [Errno 2]`
+   - **同一概念在 rawkit 内永远叫同一个名字**(`--output` 就别再叫 `--to`、`--dest`)
+   - 该重复时就重复——`--where` 的 mini-DSL 严格说违反 #4(`find + exiftool + jq` 能做),但**让摄影玩家少学一个 jq = 值得**
+   - `-h` / `--help` 是一等公民:每个子命令的 help 必须**一屏看完**就知道怎么用,而不是"请阅读 man page"
+   - 不强迫用户记忆顺序:`rawkit thumb FILES -o DIR` 和 `rawkit thumb -o DIR FILES` 都应该工作
+6. **作者随时可能追加新的强约束**(本条永远在最后)。
 
 ---
 
 ## 一句话定位
 
-**RAW 摄影玩家的 imagemagick**:一条命令批量 inspect、提缩略图、改 metadata、操作
-sidecar、按 EXIF 查询/重命名/导出。CLI 优先,Python 库其次。
+**RAW 摄影玩家的 imagemagick**:一条命令批量 inspect、提缩略图、改 metadata、操作 sidecar、按 EXIF 查询/重命名/导出。CLI 优先,Python 库其次。
 
 ---
 
 ## 为什么是它
 
-- **现状很烂**:`exiftool` 是 Perl 写的 25 年老怪、语法折磨;`dcraw` 死了;
-  `ImageMagick` 处理 RAW 颜色拉胯;LrC catalog 是 SQLite 黑盒,坏了哭一周;
-  "现代的、Python 的、给玩家做批处理"的干净 CLI **没有**。
-- **作者就是用户**:我自己只拍 RAW,每次出门回来都几百张要处理 —— 自带
-  forcing function,不靠"想象的用户"。
-- **绕开 LrC 红线**:不是替代品、不是插件,是 LrC 之外的纯脚本场。导入前批量
-  改 metadata、按 EXIF 筛选、提缩略图给别的脚本用 —— 都是 LrC 做不了或做得很
-  痛的事,完全不冲突。
-- **几何级生命力**:RAW 格式只增不减(每个新机型一种 .ARW / .CR3 / .NEF / .RAF
-  / .DNG…),exiftool 一个人养 25 年证明这范畴是地质级的。
-- **单人可养**:核心是文件 IO + libraw 调用 + EXIF 解析,零算法,Python +
-  rawpy + PIL 就能起步。
+- **现状很烂**:`exiftool` 是 Perl 写的 25 年老怪、语法折磨;`dcraw` 死了;`ImageMagick` 处理 RAW 颜色拉胯;LrC catalog 是 SQLite 黑盒,坏了哭一周。"现代的、Python 的、给玩家做批处理"的干净 CLI **不存在**。
+- **作者就是用户**:只拍 RAW,每次出门回来都几百张要处理——自带 forcing function,不靠"想象的用户"。
+- **绕开 LrC 红线**:不是替代品、不是插件,是 LrC 之外的纯脚本场。导入前批量改 metadata、按 EXIF 筛选、提缩略图给别的脚本用——都是 LrC 做不了或做得很痛的事。
+- **几何级生命力**:RAW 格式只增不减(每个新机型一种 .ARW / .CR3 / .NEF / .RAF / .DNG…)。exiftool 一个人养 25 年证明这是地质级范畴。
+- **单人可养**:核心是文件 IO + libraw 调用 + EXIF 解析,零算法,Python + rawpy + exiftool 起步。
 
 ---
 
 ## 五年弧线
 
 ### Year 1 — 命令行瑞士军刀
-
 ```bash
-raw ls *.ARW --where 'iso>3200 and lens~"50"'
-raw thumb *.CR3 --size 1024 --to ./preview/
-raw rename *.NEF --pattern '{date}_{camera}_{lens}_{seq}'
-raw exif set *.RAF --copyright '李青林' --keyword 北京,胡同
-raw diff a.xmp b.xmp     # 看清 LrC 调了什么
+rawkit ls *.ARW --where 'iso>3200 and lens~"50"'
+rawkit thumb *.CR3 --size 1024 --to ./preview/
+rawkit exif get *.RAF --fields iso,lens,copyright              # 只读
+rawkit diff a.xmp b.xmp                                        # sidecar 之间比较
+
+# 需要 rename?用 Unix 组合即可(硬约束 #4):
+rawkit ls --json *.NEF | jq -r '"mv \(.path) \(.date)_\(.model)_\(.seq).NEF"' | sh
 ```
+> 注:原本设想的 `rawkit exif set`(往 RAW 写 metadata)被硬约束 #2 禁掉;`rawkit rename` 被硬约束 #4 砍掉。
+**替代**:exiftool(metadata)+ dcraw(渲染)+ 一半 LrC 导入前预处理。
+**用户**:写 Python 的摄影玩家。
 
-替代:exiftool(metadata)+ dcraw(渲染)+ 一半 LrC 导入前预处理。
-用户:写 Python 的摄影玩家。
-
-### Year 2 — Sidecar 时代(进入 LrC 用户疼点)
-
+### Year 2 — Sidecar 时代(进 LrC 用户疼点)
 ```bash
-raw preset extract photo.xmp > sunset-preset.json
-raw preset apply sunset-preset.json *.ARW
-raw catalog git-init ~/Pictures/2026
-raw catalog log photo.ARW
-raw catalog rollback photo.ARW HEAD~3
+rawkit preset extract photo.xmp > sunset.json
+rawkit preset apply sunset.json *.ARW
+rawkit catalog git-init ~/Pictures/2026
+rawkit catalog log photo.ARW
+rawkit catalog rollback photo.ARW HEAD~3
 ```
-
-**这是杀手锏**:LrC catalog 是 SQLite 黑盒,Adobe 二十年不修(利益冲突)。
-让摄影玩家**第一次让 LrC 的编辑历史变成 git 友好的文件**——可备份、可分享
-preset、可多机同步、可团队协作。
+**杀手锏**:LrC catalog 是 SQLite 黑盒,Adobe 二十年不修(利益冲突)。让摄影玩家**第一次让 LrC 编辑历史变成 git 友好的文件**——可备份、可分享 preset、可多机同步、可团队协作。
 
 ### Year 3 — 浏览层
-
 ```bash
-raw serve ~/Pictures   # 本地 web,浏览器看 RAW 缩略图 + 全 metadata 搜索
-raw find --where 'place="北京" and year=2024 and rating>=3'
+rawkit serve ~/Pictures
+rawkit find --where 'place="北京" and year=2024 and rating>=3'
 ```
-
 让"想脱离 LrC 的用户"有路径——不强迫,但门开了。
 
 ### Year 4 — AI 层(错位竞争 Adobe Sensei)
-
 ```bash
-raw embed *.ARW        # 给每张图算嵌入
-raw dedupe ~/Pictures  # 找重复/相似/废片
-raw cluster --trip     # 自动按"一次出行"聚类
-raw caption *.ARW      # 自动生成 alt text(接 LLM)
+rawkit embed *.ARW
+rawkit dedupe ~/Pictures
+rawkit cluster --trip
+rawkit caption *.ARW
 ```
-
 Adobe Sensei 锁云端 + 订阅;rawkit 本地 + 免费 + 用户自己的 API key。
-作者 `ai_describe_city` 的 LLM 批处理肌肉在此第二次复用。
 
 ### Year 5 — 事实标准
-
 ```python
 import rawkit
 rawkit.thumb("photo.ARW", size=2048)
 ```
+被别的开源项目当 imagemagick 调:静态站发布工具、家庭相册项目、Astro/Hugo 主题。`brew install rawkit` 进入摄影玩家工具链推荐列表。
 
-被别的开源项目当 imagemagick 调:静态站发布工具、家庭相册项目、Astro/Hugo
-主题。`brew install rawkit` 进入摄影玩家工具链推荐列表。
-
----
-
-## 用户的同心圆
-
+### 同心圆
 ```
 作者自己 → 写 Python 的摄影玩家 → 摄影玩家(用 web UI) → 任何用 RAW 的工具
    ↑ Y1         ↑ Y1-2              ↑ Y3                  ↑ Y5
 ```
-
-每一圈不依赖下一圈成立。**Year 1 服务作者自己一个人就够它活下来**——这是它
-比"凭空想的 LLM 管线工具"强的关键:那种没作者 dogfood 就死,这个**今晚就在用**。
+每一圈不依赖下一圈成立。**Year 1 服务作者自己一个人就够它活下来**。
 
 ---
 
@@ -113,125 +120,192 @@ rawkit.thumb("photo.ARW", size=2048)
 
 ---
 
-## 商业模式(Year 3+ 才考虑,Year 1 别想)
+## v0.1 MVP 范围
 
-- 核心永久开源、MIT。
-- 可选托管 web UI($5/月,用户传到自己 S3,作者只提供界面)。
-- preset 市场分成。
-- 摄影机构/工作室批处理 license($几百/年)。
+### v0.0.1 — 今天就能 commit 的第一块砖
+
+在动任何 v0.1 功能之前,先把架子连贯起来:
+
+- `uv init` 初始化 + `uv add typer rich rawpy lark` + `console_scripts=rawkit`
+- `rawkit ls .` 能递归列出当前目录所有 RAW 文件(纯文件名表,无 EXIF、无 `--where`、无颜色)
+- `pytest` 跑过一个绿测(哪怕只是 `assert rawkit.__version__`)
+- 首次 `git commit`
+
+目的:**把 uv / typer / src-layout / console entry / 测试链路全部踩一遇**,后面写真功能时零杂念。预期耗时 ≤ 一个晚上。
+
+### v0.1 拆分:先 ls+thumb,再谈其他
+
+- **v0.1.0** = `ls --where` + `thumb` 两个命令跑通下面验收剧本第 1 条管道
+- **v0.1.x** = 第一次真实 dogfood 后才动 `exif` / `export` / `diff`(让真痛点决定优先级,而不是现在干猜)
+
+理由:从 0 到 1 的价值远大于从 4 到 5。`ls + thumb` 是变成"你下次拍完真会用"的最短路径。
+
+### 验收剧本(MVP 跑通的判据)
+
+带最近一卷 ≥100 张 RAW,全程不开 LrC,跑通:
+
+```bash
+# 1) 按 EXIF 筛选 + 提缩略图(证明管道组合可用)
+rawkit ls ~/Pictures/2026-06-17/ --where 'iso<800 and lens~"50"' --json \
+  | jq -r '.path' \
+  | rawkit thumb - -o cull/ --size 1024
+
+# 2) 按机型 + 日期重命名(组合 mv,硬约束 #4)
+rawkit ls ~/Pictures/2026-06-17/ --json \
+  | jq -r '"mv \(.path) \(.date)_\(.model)_\(.seq | tonumber | tostring | ("0000" + .)[-4:]).\(.path | split(".") | last)"' \
+  | sh -n   # 先用 sh -n dry-run 检查,OK 后改成 | sh
+```
+
+> ⚠️ **这条管道本身严重违反硬约束 #5(心智负担)**。故意保留,是为了让 dogfood 时亲身感受那股"我不想再写这种 jq"的厌恶——那个瞬间就是 `rawkit rename` 该不该复活的**实证信号**。**如果第二次拍完仍然嫆它丑,就是 rename 该回来的信号**;在那之前不凭猜想加。
+
+跑通 = MVP 成立;卡壳处 = v0.2 的第一批 issue。
+
+### 命令清单(v0.1 共 4 个)
+
+#### `rawkit thumb`
+- 签名:`rawkit thumb FILES... [-o thumbs/] [--size 1024] [-f]`
+- 抽**内嵌 JPEG 缩略图**(不解 RAW,快);缺缩略图时 stderr 警告并跳过
+- 默认输出 `./thumbs/`,文件已存在则跳过;`-f` 强制覆盖
+- 接受:目录(递归)/ 文件列表 / `-`(从 stdin 读路径)
+- `--size` 暂时只裁不放大(内嵌缩略图通常 1620px 左右)
+
+#### `rawkit exif`
+- 签名:`rawkit exif FILE [--json] [--fields iso,lens,fnumber]`
+- 默认人读对齐表;`--json` 给脚本;`--fields` 只输出指定字段
+- 后端:包 `exiftool` 子进程 + `-j`
+
+#### `rawkit ls` —— **MVP 心脏**
+- 签名:`rawkit ls [DIR] [--where EXPR] [--json] [--sort time|name|iso]`
+- 默认输出:`文件名  时间  机型  镜头  ISO  光圈  快门`(对齐表)
+- `--json` 输出 JSONL(每行一对象,便于 `jq`)
+- 递归 + 自动识别 RAW 后缀(ARW/CR2/CR3/NEF/RAF/DNG/ORF/RW2…)
+- 进度条:>50 文件且 stdout 是 TTY 才显示
+- **实现注意**:`exiftool` 必须**一次调用传所有路径**(`exiftool -j f1 f2 f3...`),不要每文件 fork 一次,否则 1000 张就要分钟级
+
+#### `rawkit export`
+- 签名:`rawkit export FILES... [-o exports/] [--format jpeg|png] [--quality 90] [--size 2048]`
+- 走 `rawpy` 全解码(非内嵌缩略图);v0.1 用 rawpy 默认参数
+- **不暴露**白平衡/曲线(那是 LrC 的活);长边 resize 到 `--size`
+
+### `--where` 表达式语法 v1
+
+**这是公开 API,一旦发布只增不删。**
+
+字段:
+- 数值:`iso`、`fnumber`、`shutter`(秒,浮点)、`focal`(mm)
+- 字符串:`lens`、`model`、`maker`
+- 时间:`date`(YYYY-MM-DD)、`time`(HH:MM)
+
+操作:
+- 比较:`>` `<` `>=` `<=` `==` `!=`
+- 字符串子串:`~"50mm"`(大小写不敏感)
+- 布尔:`and` `or` `not`、括号 `()`
+
+示例:
+- `iso>3200 and lens~"50"`
+- `(focal>=70 and focal<=200) or lens~"70-200"`
+- `date>="2026-06-01" and not model~"iPhone"`
+
+**实现**:用 `lark`(约 30 行 BNF 文法 + 自带位置报错)。**禁止 `eval()`**。
+不手写递归下降——纸面 50 行,真做含错误位置/单测会膨胀到 300+ 行,是新手陷阱。
+
+### 全局约定
+
+- 通用开关:`-v/--verbose`、`-q/--quiet`、`--json`、`-n/--dry-run`、`-f/--force`、`-o/--output`、`-h/--help`、`--version`
+- 退出码:`0` 成功 / `1` 部分失败(详情进 stderr)/ `2` 用法错
+- **stdout 只走数据,日志/进度走 stderr**(管道契约,神圣不可侵犯)
+- `isatty()` 判断 TTY:非 TTY 自动关颜色/进度条
+- `-` 代表 stdin/stdout;`--` 之后全部当文件名
+- 路径全用 `pathlib.Path`,不写死分隔符
+
+### 施工顺序(建议)
+
+1. 仓库骨架:`uv init` → `pyproject.toml` + `src/rawkit/` + `tests/` + `console_scripts=rawkit`;`uv add rawpy typer rich lark` 加依赖
+2. `src/rawkit/output.py`:table/json 双轨打印 + TTY 检测;日志统一到 stderr
+3. `rawkit exif`(最简单,先打通 exiftool 链路与 `--json` 输出契约)
+4. `rawkit ls`(不带 where 的最小版,默认对齐表,**批量调 exiftool**)
+5. `src/rawkit/query.py`:`lark` 实现 `--where` v1 + 单测覆盖全部语法
+6. `rawkit thumb`(stdin `-` / `-f` / stderr 警告)
+7. `rawkit export`(rawpy 全解码 + resize)
+8. **Dogfood**:跑一次验收剧本,记 issue → v0.2
+
+---
+
+## 设计决策(已拍板)
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 首发语言 | **Python** | rawpy 是 libraw 的 Py 封装,1 周拿到原型;作者最熟 |
+| RAW 解码 | **永远依赖 libraw**(经 `rawpy`) | dcraw 衍生的事实标准,自己重写 = 给自己挖坟 |
+| metadata 后端 | **包 `exiftool`**,但**一次调用传所有路径** | maker note 覆盖最全;批量调用是性能命脉 |
+| CLI 框架 | **typer** | click 升级版,类型提示天然映射;自带 shell 补全 |
+| 终端输出 | **rich**(typer 自动带) | 表格/进度条事实标准,审美过关 |
+| 包结构 | **src/ layout** | `src/rawkit/`;避免 import 路径混乱 |
+| 入口命令名 | **`rawkit`**(不是 `raw`) | `raw` 太通用、PATH 冲突高(Linux `raw(8)`、Homebrew 占用过);`rawkit` 自我说明 |
+| 表达式语法 | **`lark` 解析,禁用 `eval`** | 手写递归下降是新手陷阱(纸面 50 行,实际 300+) |
+| Python 工具链 | **`uv` 一把抓** | 虚拟环境/依赖/运行/分发/锁文件全走 uv,见硬约束 #3 |
+| 分发 | 内测期**不分发**(硬约束 #1);未来用 `uv tool install rawkit` | Homebrew Formula 留到 v1.0 |
+| 平台支持 | **macOS + Linux 一等**;Windows best-effort | 作者只用 mac,Windows 上 rawpy/exiftool/路径都是坑,不假装支持 |
+| 测试 fixture | **不入库**,`conftest.py` 读 `RAWKIT_TEST_SAMPLES` 环境变量 | 避开 git LFS 配额费用 + 外链失效 |
+| Rust 重写 | **暂不**,留触发条件 | 触发:分发痛点 / 性能瓶颈 / 多语言绑定需求三选一 |
+| macOS Core Image v9 | **v0.2+ 作为可选后端** `--engine apple` | macOS 27 引入 ANE 加速;v0.1 不动跨平台路径 |
+| 配置文件 | **v0.1 不做** | 等第三次喊"这个默认值烦死了"再加 |
+| Web UI | **v0.3 才做** `rawkit serve` | 别让 UI 反过来污染 CLI 心脏的简洁 |
+
+---
+
+## 不做(踩坑预防)
+
+- ❌ **不自己实现 RAW 解码**——永远 libraw
+- ❌ **不做编辑/调色**——那是 LrC 的活,越界即死
+- ❌ **v0.1 不加**:配置文件 / 索引数据库 / Web UI / 交互式 TUI / 向导
+- ❌ **不用 `eval()` 实现 `--where`**——安全和稳定性都崩
+- ❌ **stdout 不许混日志/进度条**——管道契约神圣
+- ❌ **没真实基准前不重写 Rust**——优化没量化指标就是自嗨
+- ❌ **不把缩略图当渲染**——`rawkit thumb` 抽内嵌 JPEG,`rawkit export` 才是真解码
 
 ---
 
 ## 真风险
 
-1. **Adobe 不会死**——RAW demosaicing 核心仍在 ACR 手里。rawkit 永远是"LrC 旁边"
-   的工具,不是"取代 LrC"。心理上必须接受这个定位,否则会一直觉得不够。
-2. **摄影玩家小众,Python+摄影玩家更小众**——Year 1-2 种子用户最多几百到一两千。
-   ripgrep 第一年也就这量级。期望对齐。
-3. **维护是长跑**——每个新机型出来要加测试样本。但有 exiftool 25 年前例,
-   说明能撑,且说明这真是有人做了一辈子的活。
+1. **Adobe 不会死**——RAW demosaicing 核心仍在 ACR 手里。rawkit 永远是"LrC 旁边"的工具,不是"取代 LrC"。心理上必须接受。
+2. **摄影玩家小众,Python+摄影玩家更小众**——Year 1-2 种子用户最多几百到一两千,ripgrep 第一年也这量级。期望对齐。
+3. **维护是长跑**——每个新机型出来要加测试样本。但 exiftool 25 年前例说明能撑。
+4. **dogfood 是唯一存活信号**:如果某一周拍了 RAW 但没用 rawkit,要么修工具,要么承认它没价值。**项目不会死于代码烂,会死于作者不再拍照**。
 
 ---
 
-## 第一刀(立即可干)
+## 长期护城河方向(Year 3+ 才动)
 
-1. 把 `../dotbox/extract_thumb_from_raw.py` 当种子,移进来做 `raw thumb` 的雏形。
-2. 加 `raw exif ls`(只读 metadata,先用 exiftool 当后端,后面再换 piexif/rawpy)。
-3. 下一次拍完 RAW 真的用一次——这是它能不能活的唯一判定。
+包装层 = 快速可复制,价值有限。要到 ffmpeg 级,得在下列至少一个方向深耕:
 
----
+1. **Rosetta Stone:跨软件编辑参数语义对照表**(最高护城河,3-5 年工程)。把 LrC / Capture One / DxO / darktable 的 sidecar/catalog 编辑语义互相映射——一旦做出门槛极高。
+2. **编辑历史的语义 versioning(git for RAW edits)**。sidecar 解析为 `EditOp`,支持语义 `diff` / 三方 merge / 人话冲突描述。
+3. **Multi-engine 渲染编排**(`--engine apple` / `--engine libraw`),长期可探训练开源去噪/demosaic 模型缩小与闭源差距。
+4. **EXIF / MakerNote 原生索引数据库**,比 exiftool 更快批量索引;长期维护 maker note 解析就是护城河。
 
-## 与 ideas/ 里其它点子的关系
-
-- 复用 `ai_describe_city` 的 LLM 批处理工程经验(Y4 caption/cluster 用)。
-- 复用 `camera-gear` 的镜头/机型 schema(Y2-3 metadata 标准化用)。
-- `dotbox/extract_thumb_from_raw.py` 是它的史前史。
+设计建议:Year 1 做包装与 UX,**从 Day 1 把 Rosetta Stone 当北极星**,数据模型和 API 给这条路留位置。
 
 ---
 
-## 技术补充（来自讨论记录）
+## 商业模式(Year 3+ 才考虑)
 
-### Apple macOS 27 / Core Image v9
+- 核心永久开源、MIT
+- 可选托管 web UI($5/月,用户传到自己 S3,作者只提供界面)
+- preset 市场分成
+- 摄影机构/工作室批处理 license($几百/年)
 
-- WWDC26 推出 macOS 27(Core Image RAW v9)，在 Apple Silicon 上利用 ANE 加速，提升锐度和色彩表现。
-- 对 rawkit 的影响：把 Core Image v9 当作**可选渲染后端**能显著提升 Mac 上的渲染质量；但 Apple 平台仅做质量替代，不替代我们的工作流价值（metadata/sidecar/git/编排）。
-
-建议：在 Year 2 路线中增加 `--engine apple` / `--engine libraw` 的分支实现；保持跨平台兜底为 libraw。
-
-### libraw 与 rawpy 的角色
-
-- `libraw` 是开源的 C++ RAW 解码事实标准（dcraw 衍生），支持绝大多数相机 RAW 格式。
-- `rawpy` 是 `libraw` 的 Python 包装器，适合作为 Year 1 的解码后端。
-- 结论：不要重写 RAW 解码，直接依赖 `libraw`（通过 `rawpy`）——把精力放在工作流和数据层。
-
-### 语言选择与迁移策略
-
-- **Year 1 推荐：Python**（快速验证、用 `rawpy`、快速 dogfood）。
-- **Year 2+ 迁移候选：Rust/C++ 核心**（当出现真实的分发/性能/绑定需求时再迁移）。
-- 可选策略：双轨（Python 主线以快速迭代为主，同时在副轨用 Rust 开发一个小的高性能二进制如 `rawkit-thumb` 作为练手与后向兼容的起点）。
-
-理由总结：Python 让你最快落地、最小化放弃风险；Rust 是未来可选优化路径，但应基于真实用户和基准数据再做迁移。
-
-### 性能瓶颈（何处用更高性能语言）
-
-- RAW 解码本身在 `libraw`（C++）层，Python 外壳对该部分影响微小。
-- 真正性能痛点可能出现于：
-  - 大规模 metadata 批读/索引（exiftool 启动开销/Perl 进程重复），适合用更接近系统层的实现替代；
-  - 高并发/低延迟的本地索引与查询（把 metadata 索引入 SQLite/本地 DB）；
-  - 高级渲染或训练的 demosaic/denoise 模型（GPU/ANE 调度，需本地或跨平台 ML 实现）。
-
-结论：Year 1-2 用 Python 足够；Year 3 若要做原生索引/自训练去噪/跨语言绑定时考虑 Rust/C++。
-
-### 真正的深度（护城河）——如何从“包装层”走向“基建”
-
-包装层 = 快速可复制，价值有限。要到达 ffmpeg 级别，rawkit 必须在下列任一或多个方向长期深耕：
-
-1. **Rosetta Stone：跨软件编辑参数语义对照表**（最高护城河）
-  - 逆向/映射 Adobe LrC / Capture One / DxO / darktable 等 sidecar/catalog 的编辑语义；
-  - 使编辑历史可移植；这是一个 3–5 年的工程，完成度一旦触及门槛便难以被复制。
-
-2. **编辑历史的语义 versioning（git for RAW edits）**
-  - 把 sidecar 解析为 EditOp，支持语义 `diff` / 三方 merge / 人话冲突描述。
-
-3. **Multi-engine 渲染编排与开源去噪/demosaic 模型**
-  - 支持 `--engine apple` / `--engine libraw`，并在长期目标中探讨训练开源去噪/去马赛克模型以缩小与闭源引擎的质量差距。
-
-4. **EXIF / MakerNote 原生索引数据库**
-  - 提供比 `exiftool` 更快速的批量索引与查询能力；长期维护 maker note 解析可形成护城河。
-
-路线建议：Year 1 做包装与 UX；从 Day 1 就把 Rosetta Stone 当作北极星和长期写作方向，把设计、数据模型、API 为这条路留位。
+Year 1 别想这个。
 
 ---
 
-## Year‑1 具体施工路线（逐步、可执行）
+## 给未来某天想放弃的你
 
-目标：在 4 周内拿到可被自己 dogfood 的最小可运行闭环 `raw thumb` + `raw exif ls` + `raw ls --where`。
+先问一个问题:
 
-周 0 (准备)
-- 在仓库中建立 `rawkit/` 包结构（`pyproject.toml` + `src/rawkit` + `tests` + CLI 入口）。
-- 把现有 `dotbox/extract_thumb_from_raw.py` 作为启始样例复制到 `rawkit/cli/thumb.py`。
+> **这一周拍的 RAW,我用 rawkit 处理了吗?**
 
-周 1 (基础 CLI 与解码)
-- 用 `typer`/`click` 实现 `raw thumb <files> --size` 命令，内部调用 `rawpy`（`libraw`）。
-- 实现 `raw exif ls <file>`：调用 `exiftool` 作为后端（subprocess），包装成结构化 JSON 输出。
-- 单元测试：样本 RAW 文件的缩略图和 metadata 能正确生成/读出。
-
-周 2 (批处理、where 查询、导出)
-- 加 `raw ls --where '<expr>'`（最初实现为简单过滤：EXIF 字段存在或值匹配），输出可机读表格（CSV/JSONL）。
-- 实现 `raw rename --pattern` 与 `raw export --to <dir>`。
-
-周 3 (本地导览)
-- 加 `raw serve <dir>`：单文件本地静态浏览器视图，展示缩略图、关键 metadata、点击查看原图（用系统默认 viewer）。
-
-周 4 (收敛、文档、发布)
-- 编写 README、示例工作流、制作 `pip` 可安装的 package、在 Homebrew 中给出打包思路（Formula 草案）。
-- Dogfood：把你最近一卷 RAW 倒进工具链，真实使用并修 bug。
-
-验收标准（Week 4）
-- `pip install -e .` 后能在本机运行 `raw thumb` 与 `raw exif ls` 并对 100 张 RAW 完成批处理（总耗时可接受）。
-- README 给出 3 个典型使用场景并能被你本人复现。
-
----
-
-如你同意，我将把上述变更提交到仓库并 push。你要不要我把 `dotbox/extract_thumb_from_raw.py` 立即移动为 `rawkit/cli/thumb.py` 并把最小 `pyproject.toml` + `src/rawkit/__init__.py` 放好？
-（已实现：`pyproject.toml`、`src/rawkit` 包骨架、`cli/thumb.py`、`cli/exif.py`、`cli/ls.py` 已添加到仓库）
+- 答 yes:继续,加你最痛的那个功能。
+- 答 no:是工具不够好,还是这周没拍照?
+  - 工具不够好 → 那正是该修的 bug,去修
+  - 没拍照 → 跟工具无关,别误判
