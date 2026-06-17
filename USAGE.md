@@ -37,12 +37,15 @@ rawkit ls --help
 
 ### 签名
 ```
-rawkit ls [PATHS...] [-w/--where EXPR] [--json]
+rawkit ls [PATHS...] [-w/--where EXPR] [-s/--sort COL] [-r/--reverse] [-R/--recursive] [--json]
 ```
 
-- `PATHS`:零个或多个**目录或 RAW 文件**。无参数 = 当前目录。目录递归扫(不跟符号链接,不进无权限子目录)。
-- `--where EXPR`:按 EXIF 条件过滤,见下方 DSL 参考。
-- `--json`:输出 JSONL(每行一对象),给 `jq` 等管道。默认是人读对齐表。
+- `PATHS`:零个或多个**目录或 RAW 文件**。无参数 = 当前目录。默认只看顶层(同 `ls`),要递归加 `-R`。
+- `--where, -w EXPR`:按 EXIF 条件过滤,见下方 DSL 参考。
+- `--sort, -s COL`:按某一列排序。**默认 `datetime`**。可选:`file` / `datetime` / `date` / `time` / `model` / `lens` / `focal` / `aperture` / `shutter` / `bias` / `iso`。
+- `--reverse, -r`:反转顺序。缺失值永远排最后(与方向无关,SQL NULLS LAST)。
+- `--recursive, -R`:递归进子目录(默认 OFF)。
+- `--json`:JSONL 输出(每行一对象),给 `jq` 等管道。默认是人读对齐表。
 
 ### 退出码
 - `0` 成功
@@ -60,10 +63,11 @@ file          date              model         lens                ...
 ...
 ```
 
-列:`file  date  model  lens  iso  aperture  shutter  bias  focal`
+列:`file  datetime  model  lens  focal  aperture  shutter  bias  iso`
 
-- 时间是 **EXIF 拍摄时间**(不是文件 mtime)
+- `datetime` 是 **EXIF 拍摄时间**(不是文件 mtime),表格里精到分;完整到秒的值在 `--json` 里
 - `bias` 是曝光补偿 EV,带符号(`+1` / `-2.42` / `0`),缺失为 `-`
+- 默认按 `datetime` 升序(最早拍的在上),可用 `--sort` / `-r` 改
 - 表格按内容自适应宽度,**不截断**;窄终端用 `| less -S` 横向滚屏
 - 单个超长文件名只破自己那行,其它行保持对齐
 
@@ -110,8 +114,9 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 | `model` | 字符串 | 机型,如 "Canon EOS R5" |
 | `maker` | 字符串 | 厂商,如 "SONY" / "Canon" |
 | `orientation` | 字符串 | `"landscape"` 或 `"portrait"`(从 EXIF Orientation 推导) |
-| `date` | 字符串 | `YYYY-MM-DD HH:MM:SS` |
-| `time` | 字符串 | `HH:MM`(从 date 派生) |
+| `datetime` | 字符串 | `YYYY-MM-DD HH:MM:SS`(拍摄时间全串) |
+| `date` | 字符串 | `YYYY-MM-DD`(从 datetime 切出) |
+| `time` | 字符串 | `HH:MM:SS`(从 datetime 切出) |
 | `gps` | 布尔 | `true` 仅当 lat 和 lon 都存在 |
 | `flash` | 布尔 | 闪光灯实际击发了为 `true` |
 
@@ -119,7 +124,7 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 
 | 操作 | 适用 | 例子 |
 |---|---|---|
-| `> < >= <= == !=` | 数值 / 字符串 / 日期 / 时间 | `iso>3200`, `date>="2024-01-01"`, `time<"06:00"` |
+| `> < >= <= == !=` | 数值 / 字符串 / 日期 / 时间 / datetime | `iso>3200`, `date>="2024-01-01"`, `time<"06:00:00"`, `datetime>="2024-01-01 12:00:00"` |
 | `== !=` (仅) | 布尔字段(`gps`/`flash`) | `gps==true`, `flash!=true` |
 | `~` | 字符串(大小写不敏感**子串**包含) | `lens~"GM"`, `model~"R5"` |
 | `and` / `or` / `not` | 逻辑组合 | `iso>800 and not lens~"24-70"` |
@@ -127,7 +132,7 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 
 **优先级**:括号 > `not` > `and` > `or`。
 
-**字面量**:`123`、`1.5`、`-2.0`(数值);`"..."`(字符串);`YYYY-MM-DD`(日期);`HH:MM`(时间);`true` / `false`(布尔)。
+**字面量**:`123`、`1.5`、`-2.0`(数值);`"..."`(字符串);`YYYY-MM-DD`(日期);`HH:MM` 或 `HH:MM:SS`(时间);`YYYY-MM-DD HH:MM[:SS]` 或 `YYYY-MM-DDTHH:MM[:SS]`(datetime);`true` / `false`(布尔)。
 
 #### 例子(由浅入深)
 
@@ -224,8 +229,8 @@ rawkit ls samples/ --where 'iso > and 5'
 
 - `rawkit thumb` — 抽 RAW 内嵌缩略图
 - `rawkit export` — rawpy 全解码导出 JPEG/PNG
-- `--sort time|iso|...` + `-r/--reverse` — 排序
-- `--no-recurse` — 关掉默认递归
 - 文件大小列(可选)
+- `--limit N` / `-n N` 取前 N 条(现在靠 `\| head`)
+- `--columns` 选定要显示的列(默认 9 列)
 
 详细愿景见 [README.md](README.md)。

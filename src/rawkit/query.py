@@ -50,21 +50,23 @@ match:      FIELD "~" STRING
 FIELD: "iso"|"fnumber"|"shutter"|"focal"|"bias"|"rating"
      | "gps_lat"|"gps_lon"
      | "lens"|"model"|"maker"|"orientation"
-     | "date"|"time"
+     | "datetime"|"date"|"time"
      | "gps"|"flash"
 CMP:   ">=" | "<=" | "==" | "!=" | ">" | "<"
 
-?value: NUMBER  -> number
-      | STRING  -> string
-      | DATE    -> date_literal
-      | TIME    -> time_literal
-      | BOOL    -> bool_literal
+?value: DATETIME -> datetime_literal
+      | NUMBER   -> number
+      | STRING   -> string
+      | DATE     -> date_literal
+      | TIME     -> time_literal
+      | BOOL     -> bool_literal
 
-NUMBER: /-?\d+(\.\d+)?/
-STRING: /"[^"]*"/
-DATE:   /\d{4}-\d{2}-\d{2}/
-TIME:   /\d{2}:\d{2}/
-BOOL:   "true" | "false"
+NUMBER:   /-?\d+(\.\d+)?/
+STRING:   /"[^"]*"/
+DATETIME: /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?/
+DATE:     /\d{4}-\d{2}-\d{2}/
+TIME:     /\d{2}:\d{2}(:\d{2})?/
+BOOL:     "true" | "false"
 
 %import common.WS
 %ignore WS
@@ -76,6 +78,7 @@ _NUMERIC_FIELDS: frozenset[str] = frozenset({
     "bias", "rating", "gps_lat", "gps_lon",
 })
 _STRING_FIELDS:  frozenset[str] = frozenset({"lens", "model", "maker", "orientation"})
+_DATETIME_FIELDS: frozenset[str] = frozenset({"datetime"})
 _DATE_FIELDS:    frozenset[str] = frozenset({"date"})
 _TIME_FIELDS:    frozenset[str] = frozenset({"time"})
 _BOOL_FIELDS:    frozenset[str] = frozenset({"gps", "flash"})
@@ -96,13 +99,8 @@ def _coerce_numeric(v: Any) -> float | None:
 
 
 def _record_field(record: dict[str, Any], field: str) -> Any:
-    """Read a logical field from a record, deriving virtual fields."""
-    if field == "time":
-        # derive HH:MM from normalized date 'YYYY-MM-DD HH:MM:SS'
-        d = record.get("date")
-        if isinstance(d, str) and len(d) >= 16:
-            return d[11:16]
-        return None
+    """Read a logical field from a record. All derived fields are already
+    materialized in exif._normalize(), so this is a straight lookup."""
     return record.get(field)
 
 
@@ -132,7 +130,12 @@ class _Builder(Transformer):
         return ("date", str(tok))  # 'YYYY-MM-DD'
 
     def time_literal(self, tok: Token) -> tuple[str, str]:
-        return ("time", str(tok))  # 'HH:MM'
+        return ("time", str(tok))  # 'HH:MM' or 'HH:MM:SS'
+
+    def datetime_literal(self, tok: Token) -> tuple[str, str]:
+        # normalize 'T' separator to space so lexicographic compare matches
+        # the record's stored format 'YYYY-MM-DD HH:MM:SS'
+        return ("datetime", str(tok).replace("T", " "))
 
     def bool_literal(self, tok: Token) -> tuple[str, bool]:
         return ("bool", str(tok) == "true")
@@ -160,7 +163,11 @@ class _Builder(Transformer):
             )
         if field_name in _TIME_FIELDS and kind not in ("time", "str"):
             raise QueryError(
-                f"field `time` expects HH:MM (got a {kind})"
+                f"field `time` expects HH:MM or HH:MM:SS (got a {kind})"
+            )
+        if field_name in _DATETIME_FIELDS and kind not in ("datetime", "date", "str"):
+            raise QueryError(
+                f"field `datetime` expects YYYY-MM-DD[ HH:MM[:SS]] (got a {kind})"
             )
         if field_name in _BOOL_FIELDS:
             if kind != "bool":
@@ -201,7 +208,9 @@ class _Builder(Transformer):
     # references the STRING terminal directly, bypassing `?value`/`string`.
     def match(self, field: Token, string_token: Token) -> Predicate:
         field_name = str(field)
-        if field_name not in (_STRING_FIELDS | _DATE_FIELDS | _TIME_FIELDS):
+        if field_name not in (
+            _STRING_FIELDS | _DATE_FIELDS | _TIME_FIELDS | _DATETIME_FIELDS
+        ):
             raise QueryError(
                 f"`~` (substring match) only applies to string/date/time fields; "
                 f"got `{field_name}`"

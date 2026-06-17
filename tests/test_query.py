@@ -11,7 +11,9 @@ from rawkit.query import QueryError, compile_where
 
 R_SONY = {
     "path": "/x/a.ARW",
-    "date": "2024-03-15 12:34:56",
+    "datetime": "2024-03-15 12:34:56",
+    "date":     "2024-03-15",
+    "time":     "12:34:56",
     "maker": "SONY",
     "model": "ILCE-7M4",
     "lens": "FE 50mm F1.4 GM",
@@ -23,7 +25,9 @@ R_SONY = {
 
 R_CANON = {
     "path": "/x/b.CR3",
-    "date": "2022-05-13 16:38:09",
+    "datetime": "2022-05-13 16:38:09",
+    "date":     "2022-05-13",
+    "time":     "16:38:09",
     "maker": "Canon",
     "model": "Canon EOS R5",
     "lens": "RF800mm F11 IS STM",
@@ -35,7 +39,9 @@ R_CANON = {
 
 R_RICOH_NO_LENS = {  # fixed-lens compact, LensModel absent
     "path": "/x/c.DNG",
-    "date": "2022-11-07 23:15:15",
+    "datetime": "2022-11-07 23:15:15",
+    "date":     "2022-11-07",
+    "time":     "23:15:15",
     "maker": "RICOH",
     "model": "RICOH GR III",
     "iso": 500,
@@ -115,9 +121,26 @@ def test_date_range() -> None:
     assert _filter('date>="2022-01-01" and date<"2023-01-01"') == [R_CANON, R_RICOH_NO_LENS]
 
 
-def test_time_field_derived_from_date() -> None:
-    # R_SONY @ 12:34, R_CANON @ 16:38, R_RICOH @ 23:15
+def test_time_field() -> None:
+    # R_SONY @ 12:34:56, R_CANON @ 16:38:09, R_RICOH @ 23:15:15
     assert _filter('time>="20:00"') == [R_RICOH_NO_LENS]
+
+
+def test_time_with_seconds_literal() -> None:
+    assert _filter('time>="23:15:15"') == [R_RICOH_NO_LENS]
+    assert _filter('time>="23:15:16"') == []
+
+
+def test_datetime_field() -> None:
+    # full timestamp compare — same calendar day but different seconds
+    rec_a = {**R_SONY, "datetime": "2024-03-15 12:00:00"}
+    rec_b = {**R_SONY, "datetime": "2024-03-15 14:00:00"}
+    assert _filter('datetime>="2024-03-15 13:00:00"', [rec_a, rec_b]) == [rec_b]
+
+
+def test_datetime_accepts_date_only_literal() -> None:
+    # 'YYYY-MM-DD' literal against datetime field compares prefix correctly
+    assert _filter('datetime>="2024-01-01"', [R_SONY, R_CANON]) == [R_SONY]
 
 
 # --- logical combinators + precedence ---------------------------------------

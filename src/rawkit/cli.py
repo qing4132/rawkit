@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -72,17 +73,18 @@ RAW_EXTS: frozenset[str] = frozenset({
 
 # --- input resolution -------------------------------------------------------
 
-def _collect_raws(inputs: Iterable[Path]) -> list[Path]:
+def _collect_raws(inputs: Iterable[Path], recursive: bool) -> list[Path]:
     """Resolve a mix of files and directories to a sorted list of RAW paths.
 
     Behavior:
-    - directory: recursive scan (unreadable subtrees skipped, symlinks not
-      followed) for files whose suffix is in RAW_EXTS
+    - directory: scan for RAW files. By default only the top level (matching
+      Unix `ls`); with `recursive=True` walks the whole subtree (unreadable
+      subtrees skipped, symlinks not followed).
     - file with RAW suffix: included as-is
     - file with non-RAW suffix: skipped with a stderr warning
     - non-existent path: stderr error, abort the whole command (exit 1)
 
-    Duplicates (same realpath reached via multiple args) are removed.
+    Duplicates (same path reached via multiple args) are removed.
     """
     missing: list[Path] = []
     found: set[Path] = set()
@@ -92,13 +94,23 @@ def _collect_raws(inputs: Iterable[Path]) -> list[Path]:
             missing.append(inp)
             continue
         if inp.is_dir():
-            for dirpath, _dirnames, filenames in os.walk(
-                inp, onerror=lambda _e: None, followlinks=False
-            ):
-                for name in filenames:
-                    p = Path(dirpath) / name
-                    if p.suffix.lower() in RAW_EXTS:
-                        found.add(p)
+            if recursive:
+                for dirpath, _dirnames, filenames in os.walk(
+                    inp, onerror=lambda _e: None, followlinks=False
+                ):
+                    for name in filenames:
+                        p = Path(dirpath) / name
+                        if p.suffix.lower() in RAW_EXTS:
+                            found.add(p)
+            else:
+                try:
+                    for p in inp.iterdir():
+                        if p.is_file() and p.suffix.lower() in RAW_EXTS:
+                            found.add(p)
+                except PermissionError:
+                    typer.echo(
+                        f"rawkit: {inp}: permission denied", err=True
+                    )
         elif inp.is_file():
             if inp.suffix.lower() in RAW_EXTS:
                 found.add(inp)
@@ -122,18 +134,18 @@ def _collect_raws(inputs: Iterable[Path]) -> list[Path]:
 _FILE_COL_SOFT_CAP = 50
 
 
-def _fmt_date(v: Any) -> str:
-    """`2023:10:27 17:09:43` → `2023-10-27 17:09` (minute precision)."""
+def _fmt_datetime(v: Any) -> str:
+    """`2024-01-02 03:04:05` → `2024-01-02 03:04` (minute precision for table).
+
+    Full datetime including seconds is preserved in the underlying record
+    and exposed via --json and the `datetime` / `time` --where fields.
+    """
     if not v:
         return "-"
-    head = str(v).partition(".")[0]
-    try:
-        d, t = head.split(" ", 1)
-        d = d.replace(":", "-")
-        t = ":".join(t.split(":")[:2])
-        return f"{d} {t}"
-    except ValueError:
-        return str(v)
+    s = str(v).partition(".")[0]
+    if len(s) >= 16 and s[10] == " ":
+        return s[:16]
+    return s
 
 
 def _fmt_iso(v: Any) -> str:
@@ -198,7 +210,7 @@ _TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # ISO last on purpose: it has the widest range (100..102400) so its
     # right-aligned magnitude is easy to scan along the table's right edge.
     ("file",     "_filename", "l"),
-    ("date",     "date",      "l"),
+    ("datetime", "datetime",  "l"),
     ("model",    "model",     "l"),
     ("lens",     "lens",      "l"),
     ("focal",    "focal",     "r"),
@@ -209,12 +221,12 @@ _TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
 )
 
 _FORMATTERS = {
-    "date":    _fmt_date,
-    "iso":     _fmt_iso,
-    "fnumber": _fmt_fnumber,
-    "shutter": _fmt_shutter,
-    "focal":   _fmt_focal,
-    "bias":    _fmt_bias,
+    "datetime": _fmt_datetime,
+    "iso":      _fmt_iso,
+    "fnumber":  _fmt_fnumber,
+    "shutter":  _fmt_shutter,
+    "focal":    _fmt_focal,
+    "bias":     _fmt_bias,
 }
 
 _BOLD = "\x1b[1m"
@@ -279,6 +291,60 @@ def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
         typer.echo(json.dumps(r, ensure_ascii=False))
 
 
+# --- sorting ----------------------------------------------------------------
+
+class SortKey(str, Enum):
+    """All column headers from the default table are accepted as sort keys,
+    plus the three time slices (datetime/date/time) so the user can pick
+    precision."""
+    file     = "file"
+    datetime = "datetime"
+    date     = "date"
+    time     = "time"
+    model    = "model"
+    lens     = "lens"
+    focal    = "focal"
+    aperture = "aperture"
+    shutter  = "shutter"
+    bias     = "bias"
+    iso      = "iso"
+
+
+# Per-sort-key extractor: returns the value to compare, or None if missing.
+# Strings are lowercased so case differences don't reorder rows.
+_SORT_EXTRACTORS: dict[SortKey, Any] = {
+    SortKey.file:     lambda r: Path(r["path"]).name.lower() if r.get("path") else None,
+    SortKey.datetime: lambda r: r.get("datetime"),
+    SortKey.date:     lambda r: r.get("date"),
+    SortKey.time:     lambda r: r.get("time"),
+    SortKey.model:    lambda r: r["model"].lower() if r.get("model") else None,
+    SortKey.lens:     lambda r: r["lens"].lower() if r.get("lens") else None,
+    SortKey.focal:    lambda r: r.get("focal"),
+    SortKey.aperture: lambda r: r.get("fnumber"),
+    SortKey.shutter:  lambda r: r.get("shutter"),
+    SortKey.bias:     lambda r: r.get("bias"),
+    SortKey.iso:      lambda r: r.get("iso"),
+}
+
+
+def _sort_records(
+    records: list[dict[str, Any]], key: SortKey, reverse: bool,
+) -> list[dict[str, Any]]:
+    """Sort by `key`. Missing values are pushed to the END regardless of
+    `reverse` (NULLS LAST semantics, as common in SQL engines)."""
+    extract = _SORT_EXTRACTORS[key]
+    haves: list[tuple[Any, dict[str, Any]]] = []
+    misses: list[dict[str, Any]] = []
+    for r in records:
+        v = extract(r)
+        if v is None:
+            misses.append(r)
+        else:
+            haves.append((v, r))
+    haves.sort(key=lambda pair: pair[0], reverse=reverse)
+    return [r for _, r in haves] + misses
+
+
 # --- ls command -------------------------------------------------------------
 
 @app.command()
@@ -286,7 +352,8 @@ def ls(
     paths: list[Path] = typer.Argument(
         None,
         help="Files or directories to scan. Defaults to current directory. "
-             "Directories are walked recursively; files must have a RAW suffix.",
+             "Directories are listed top-level only unless -R is given; "
+             "files must have a RAW suffix.",
     ),
     where: str = typer.Option(
         "",
@@ -295,6 +362,25 @@ def ls(
         metavar="EXPR",
         help="Filter rows by an EXIF predicate. "
              "Examples: 'iso>3200 and lens~\"50\"', 'date>=\"2024-01-01\"'.",
+    ),
+    sort: SortKey = typer.Option(
+        SortKey.datetime,
+        "--sort",
+        "-s",
+        case_sensitive=False,
+        help="Column to sort by. Missing values always sort to the end.",
+    ),
+    reverse: bool = typer.Option(
+        False,
+        "--reverse",
+        "-r",
+        help="Reverse the sort order.",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only, matching `ls`).",
     ),
     as_json: bool = typer.Option(
         False,
@@ -308,7 +394,7 @@ def ls(
     output into jq or other tooling.
     """
     inputs = paths if paths else [Path(".")]
-    raws = _collect_raws(inputs)
+    raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
         return
 
@@ -323,6 +409,8 @@ def ls(
         records = [r for r in records if predicate(r)]
         if not records:
             return
+
+    records = _sort_records(records, sort, reverse)
 
     if as_json:
         _emit_jsonl(records)

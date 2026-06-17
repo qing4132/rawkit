@@ -49,7 +49,9 @@ def test_batch_read_normalizes_fields(monkeypatch) -> None:
     records = exif.batch_read([Path("a.ARW")])
     assert records == [{
         "path": "a.ARW",
-        "date": "2024-01-02 03:04:05",  # colons normalized to dashes
+        "datetime": "2024-01-02 03:04:05",  # colons normalized to dashes
+        "date":     "2024-01-02",            # derived YYYY-MM-DD slice
+        "time":     "03:04:05",              # derived HH:MM:SS slice
         "maker": "SONY",
         "model": "ILCE-7M4",
         "lens": "FE 50mm F1.4",

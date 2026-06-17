@@ -25,7 +25,7 @@ import typer
 # `flash`, `gps`) are *derived* in _normalize() rather than directly mapped.
 _FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("SourceFile",         "path"),
-    ("DateTimeOriginal",   "date"),
+    ("DateTimeOriginal",   "datetime"),  # full 'YYYY-MM-DD HH:MM:SS'; `date` and `time` are derived below
     ("Make",               "maker"),
     ("Model",              "model"),
     ("LensModel",          "lens"),
@@ -33,11 +33,10 @@ _FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("FNumber",            "fnumber"),
     ("ExposureTime",       "shutter"),
     ("FocalLength",        "focal"),
-    ("ExposureCompensation", "bias"),  # exiftool exposes EV bias under this name
+    ("ExposureCompensation", "bias"),
     ("Rating",             "rating"),
     ("GPSLatitude",        "gps_lat"),
     ("GPSLongitude",       "gps_lon"),
-    # The next two are read raw and then derived into typed fields below.
     ("Orientation",        "_orientation_raw"),
     ("Flash",              "_flash_raw"),
 )
@@ -94,16 +93,21 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     for tag, key in _FIELD_MAP:
         if tag in record and record[tag] not in (None, ""):
             out[key] = record[tag]
-    # exiftool prints dates as 'YYYY:MM:DD HH:MM:SS' (a legacy EXIF quirk).
-    # Normalize to 'YYYY-MM-DD HH:MM:SS' so string compare matches the
-    # --where date literal syntax (YYYY-MM-DD) and so JSON output is sane.
-    d = out.get("date")
-    if isinstance(d, str) and len(d) >= 10 and d[4] == ":" and d[7] == ":":
-        out["date"] = d[:4] + "-" + d[5:7] + "-" + d[8:]
 
-    # orientation: EXIF tag is 1..8 (an enum). Map to a human-friendly string.
-    # Values 1/2/3/4 mean the image is naturally landscape-oriented (top edge
-    # is at the top or bottom); 5/6/7/8 mean the camera was held vertically.
+    # datetime / date / time three-field split.
+    # exiftool returns 'YYYY:MM:DD HH:MM:SS' (legacy EXIF format with colons in
+    # the date part). We expose three string fields so DSL queries can target
+    # the precision the user actually means:
+    #   datetime = 'YYYY-MM-DD HH:MM:SS'  (full, lexicographically sortable)
+    #   date     = 'YYYY-MM-DD'           (calendar day)
+    #   time     = 'HH:MM:SS'             (time of day)
+    dt = out.get("datetime")
+    if isinstance(dt, str) and len(dt) >= 19 and dt[4] == ":" and dt[7] == ":":
+        normalized = dt[:4] + "-" + dt[5:7] + "-" + dt[8:]
+        out["datetime"] = normalized
+        out["date"] = normalized[:10]
+        out["time"] = normalized[11:19]
+
     raw_o = out.pop("_orientation_raw", None)
     if raw_o is not None:
         try:
@@ -115,8 +119,6 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
-    # flash: the EXIF Flash tag is a bitfield. With -n exiftool returns it as
-    # an integer; the low bit (1) means 'flash fired'. Expose as bool.
     raw_f = out.pop("_flash_raw", None)
     if raw_f is not None:
         try:
@@ -124,8 +126,6 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
-    # gps: convenience boolean meaning 'has usable coordinates'. The lat/lon
-    # numbers are already exposed under gps_lat / gps_lon for box queries.
     if "gps_lat" in out and "gps_lon" in out:
         out["gps"] = True
 
