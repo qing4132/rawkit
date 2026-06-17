@@ -169,3 +169,106 @@ def test_shutter_formatting_edge_cases() -> None:
     assert _fmt_shutter(1.3) == "1.3s"
     assert _fmt_shutter(30) == "30s"
     assert _fmt_shutter(None) == "-"
+
+
+# --- multi-input handling ---------------------------------------------------
+
+def test_ls_accepts_multiple_dirs(tmp_path, fake_exif) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "first.ARW").write_bytes(b"")
+    (b / "second.CR3").write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(a), str(b), "--json"])
+    assert result.exit_code == 0
+    names = {Path(json.loads(ln)["path"]).name
+             for ln in result.stdout.splitlines() if ln.strip()}
+    assert names == {"first.ARW", "second.CR3"}
+
+
+def test_ls_accepts_files_directly(tmp_path, fake_exif) -> None:
+    f1 = tmp_path / "x.ARW"
+    f2 = tmp_path / "y.CR3"
+    f1.write_bytes(b"")
+    f2.write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(f1), str(f2), "--json"])
+    assert result.exit_code == 0
+    names = {Path(json.loads(ln)["path"]).name
+             for ln in result.stdout.splitlines() if ln.strip()}
+    assert names == {"x.ARW", "y.CR3"}
+
+
+def test_ls_mixes_files_and_dirs(tmp_path, fake_exif) -> None:
+    f = tmp_path / "loose.ARW"
+    f.write_bytes(b"")
+    d = tmp_path / "shoot"
+    d.mkdir()
+    (d / "inside.CR3").write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(f), str(d), "--json"])
+    assert result.exit_code == 0
+    names = {Path(json.loads(ln)["path"]).name
+             for ln in result.stdout.splitlines() if ln.strip()}
+    assert names == {"loose.ARW", "inside.CR3"}
+
+
+def test_ls_dedupes_overlapping_inputs(tmp_path, fake_exif) -> None:
+    """Passing both a dir AND a file inside that dir must not duplicate."""
+    (tmp_path / "shot.ARW").write_bytes(b"")
+
+    result = runner.invoke(
+        app, ["ls", str(tmp_path), str(tmp_path / "shot.ARW"), "--json"]
+    )
+    assert result.exit_code == 0
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert len(lines) == 1
+
+
+def test_ls_nonexistent_path_errors(tmp_path, fake_exif) -> None:
+    result = runner.invoke(app, ["ls", str(tmp_path / "does_not_exist")])
+    assert result.exit_code == 1
+    assert "no such file" in result.stderr.lower() or "no such file" in result.output.lower()
+
+
+def test_ls_non_raw_file_warns_and_skips(tmp_path, fake_exif) -> None:
+    (tmp_path / "ok.ARW").write_bytes(b"")
+    (tmp_path / "skipped.jpg").write_bytes(b"")
+
+    result = runner.invoke(
+        app, ["ls", str(tmp_path / "ok.ARW"), str(tmp_path / "skipped.jpg"), "--json"]
+    )
+    assert result.exit_code == 0
+    names = {Path(json.loads(ln)["path"]).name
+             for ln in result.stdout.splitlines() if ln.strip()}
+    assert names == {"ok.ARW"}
+    # Warning about the skip went to stderr (typer CliRunner merges by default)
+    assert "skipped.jpg" in (result.stderr or result.output)
+
+
+# --- long-filename table behavior -------------------------------------------
+
+def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
+    """A 79-char outlier filename must break alignment only on its own row,
+    not pad every other row's file column."""
+    short = tmp_path / "short.ARW"
+    long_name = tmp_path / ("really_long_" + "x" * 60 + ".ARW")  # 76+ chars
+    short.write_bytes(b"")
+    long_name.write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(tmp_path)])
+    assert result.exit_code == 0
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    # Header + 2 rows
+    assert len(lines) == 3
+
+    # Row width for the short-name row must NOT have been inflated to the
+    # long row's width. A naive implementation would pad short's filename
+    # cell to ~76 chars; ours caps at 50.
+    short_row = next(ln for ln in lines[1:] if "short.ARW" in ln)
+    long_row = next(ln for ln in lines[1:] if "really_long_" in ln)
+    assert len(short_row) < len(long_row) - 20, (
+        f"short row got inflated:\n  short={len(short_row)}\n  long ={len(long_row)}"
+    )

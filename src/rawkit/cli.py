@@ -69,24 +69,57 @@ RAW_EXTS: frozenset[str] = frozenset({
 })
 
 
-def _walk_raws(directory: Path) -> list[Path]:
-    """Sorted RAW files under `directory`.
+# --- input resolution -------------------------------------------------------
 
-    os.walk so a single permission-denied subtree doesn't abort the scan, and
-    symlinks are not followed (avoids cycles in real photo libraries).
+def _collect_raws(inputs: Iterable[Path]) -> list[Path]:
+    """Resolve a mix of files and directories to a sorted list of RAW paths.
+
+    Behavior:
+    - directory: recursive scan (unreadable subtrees skipped, symlinks not
+      followed) for files whose suffix is in RAW_EXTS
+    - file with RAW suffix: included as-is
+    - file with non-RAW suffix: skipped with a stderr warning
+    - non-existent path: stderr error, abort the whole command (exit 1)
+
+    Duplicates (same realpath reached via multiple args) are removed.
     """
-    found: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(
-        directory, onerror=lambda _e: None, followlinks=False
-    ):
-        for name in filenames:
-            p = Path(dirpath) / name
-            if p.suffix.lower() in RAW_EXTS:
-                found.append(p)
+    missing: list[Path] = []
+    found: set[Path] = set()
+
+    for inp in inputs:
+        if not inp.exists():
+            missing.append(inp)
+            continue
+        if inp.is_dir():
+            for dirpath, _dirnames, filenames in os.walk(
+                inp, onerror=lambda _e: None, followlinks=False
+            ):
+                for name in filenames:
+                    p = Path(dirpath) / name
+                    if p.suffix.lower() in RAW_EXTS:
+                        found.add(p)
+        elif inp.is_file():
+            if inp.suffix.lower() in RAW_EXTS:
+                found.add(inp)
+            else:
+                typer.echo(
+                    f"rawkit: skipping {inp} (not a RAW file)", err=True
+                )
+        # other (socket, fifo, broken symlink) silently ignored
+
+    if missing:
+        for p in missing:
+            typer.echo(f"rawkit: {p}: no such file or directory", err=True)
+        raise typer.Exit(code=1)
+
     return sorted(found)
 
 
-# --- display formatters -----------------------------------------------------
+# Soft cap for the file column. A pathologically long name should not
+# inflate every other row's padding — it just breaks alignment for that
+# one row. 50 chars comfortably fits any in-camera + LrC renamed scheme.
+_FILE_COL_SOFT_CAP = 50
+
 
 def _fmt_date(v: Any) -> str:
     """`2023:10:27 17:09:43` → `2023-10-27 17:09` (minute precision)."""
@@ -196,10 +229,23 @@ def _render_table(records: Iterable[dict[str, Any]]) -> None:
 
     headers = tuple(h for h, _k, _a in _TABLE_COLUMNS)
     widths = [max(len(s) for s in col) for col in zip(headers, *rows)]
+    # Size the file column to the widest "normal" filename. Names longer
+    # than the soft cap don't contribute to the width; they overflow on
+    # their own row and naturally push that row's other columns rightward,
+    # leaving the bulk of the table tight.
+    file_names = [headers[0], *(row[0] for row in rows)]
+    normal_names = [n for n in file_names if len(n) <= _FILE_COL_SOFT_CAP]
+    if normal_names:
+        widths[0] = max(len(n) for n in normal_names)
+    else:
+        widths[0] = _FILE_COL_SOFT_CAP
 
     is_tty = sys.stdout.isatty()
 
     def fmt_cell(text: str, width: int, align: str) -> str:
+        # When text is longer than `width`, Python's format spec leaves it
+        # untouched (no truncation) and adds no padding. That is exactly the
+        # "overflow this row only" behavior we want for long filenames.
         return f"{text:>{width}}" if align == "r" else f"{text:<{width}}"
 
     # Header
@@ -230,13 +276,10 @@ def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
 
 @app.command()
 def ls(
-    directory: Path = typer.Argument(
-        Path("."),
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-        help="Directory to scan (recursive).",
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Files or directories to scan. Defaults to current directory. "
+             "Directories are walked recursively; files must have a RAW suffix.",
     ),
     as_json: bool = typer.Option(
         False,
@@ -244,16 +287,17 @@ def ls(
         help="Emit JSONL on stdout (one object per file) instead of an aligned table.",
     ),
 ) -> None:
-    """List RAW files under DIRECTORY with their key EXIF.
+    """List RAW files under the given paths with their key EXIF.
 
     Default output is an aligned, human-readable table. Use --json to pipe the
     output into jq or other tooling.
     """
-    paths = _walk_raws(directory)
-    if not paths:
+    inputs = paths if paths else [Path(".")]
+    raws = _collect_raws(inputs)
+    if not raws:
         return
 
-    records = safe_batch_read(paths)
+    records = safe_batch_read(raws)
     if as_json:
         _emit_jsonl(records)
     else:
