@@ -3,7 +3,8 @@
 > 给本地 RAW 文件做批处理 / metadata / sidecar / 浏览的现代 Python CLI。
 > **不替代 Lightroom Classic，做 LrC 不做的事**——脚本化的命令行盒子，LrC 旁边那一格。
 
-> ⚠️ 状态:**v0.0 / 零代码**。本仓库目前只有这份设计文档。下一步是 v0.1 MVP。
+> ⚠️ 状态:**v0.0.1 / 内测中**。当前已实现 `rawkit ls`（EXIF 列表、`--where`、`--sort`、`--json`）。
+> 其余命令（`thumb` / `export` / `exif` 独立子命令）仍在规划中。
 >
 > 📖 **当前实际能跑什么、怎么敲命令** → 看 [USAGE.md](USAGE.md)(每加一个功能就追加到那里)。本文件只管"为什么/做什么/不做什么"。
 
@@ -124,16 +125,22 @@ rawkit.thumb("photo.ARW", size=2048)
 
 ## v0.1 MVP 范围
 
-### v0.0.1 — 今天就能 commit 的第一块砖
+### v0.0.1 — 已完成(当前基线)
 
-在动任何 v0.1 功能之前,先把架子连贯起来:
+已落地:
 
-- `uv init` 初始化 + `uv add typer rich rawpy lark` + `console_scripts=rawkit`
-- `rawkit ls .` 能递归列出当前目录所有 RAW 文件(纯文件名表,无 EXIF、无 `--where`、无颜色)
-- `pytest` 跑过一个绿测(哪怕只是 `assert rawkit.__version__`)
-- 首次 `git commit`
+- `uv` 工具链 + `console_scripts=rawkit` + `src/` 布局 + pytest 链路
+- `rawkit ls`:
+   - 多路径输入(文件/目录混合)
+   - 默认非递归,`-R` 递归
+   - exiftool 单次批量读取
+   - `--where`(lark 语法解析)
+   - `--sort`(支持多键) / `--reverse`
+   - `--json`(JSONL)
+   - 缺失值排序始终末尾(NULLS LAST)
+- 错误语义:用法错误返回 2,路径/依赖等运行错误返回 1
 
-目的:**把 uv / typer / src-layout / console entry / 测试链路全部踩一遇**,后面写真功能时零杂念。预期耗时 ≤ 一个晚上。
+一句话:现在的重点不再是“把架子搭起来”,而是围绕 `ls` 做真实 dogfood,再决定 v0.1.x 的下一刀。
 
 ### v0.1 拆分:先 ls+thumb,再谈其他
 
@@ -177,11 +184,11 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 - 后端:包 `exiftool` 子进程 + `-j`
 
 #### `rawkit ls` —— **MVP 心脏**
-- 签名:`rawkit ls [DIR] [--where EXPR] [--json] [--sort time|name|iso]`
-- 默认输出:`文件名  时间  机型  镜头  ISO  光圈  快门`(对齐表)
+- 签名:`rawkit ls [PATHS...] [-w EXPR] [-s KEY[,KEY2,...]] [-r] [-R] [--json]`
+- 默认输出:`file  datetime  model  lens  focal  aperture  shutter  bias  iso`(对齐表)
 - `--json` 输出 JSONL(每行一对象,便于 `jq`)
-- 递归 + 自动识别 RAW 后缀(ARW/CR2/CR3/NEF/RAF/DNG/ORF/RW2…)
-- 进度条:>50 文件且 stdout 是 TTY 才显示
+- 默认只看顶层(同 `ls`),`-R` 才递归;自动识别主流 RAW 后缀
+- 当前未做内建“翻页/分页”,大批量查看先用 Unix 管道(`less -S` / `head` / `tail`)
 - **实现注意**:`exiftool` 必须**一次调用传所有路径**(`exiftool -j f1 f2 f3...`),不要每文件 fork 一次,否则 1000 张就要分钟级
 
 #### `rawkit export`
