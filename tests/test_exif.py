@@ -77,6 +77,92 @@ def test_batch_read_missing_fields_omitted(monkeypatch) -> None:
     assert r["model"] == "RICOH GR III"
 
 
+def test_orientation_landscape_vs_portrait(monkeypatch) -> None:
+    fake_stdout = json.dumps([
+        {"SourceFile": "h.ARW", "Orientation": 1},  # landscape
+        {"SourceFile": "v.ARW", "Orientation": 6},  # portrait (camera held vertically)
+        {"SourceFile": "v2.ARW", "Orientation": 8},  # portrait other way
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    recs = exif.batch_read([Path("h.ARW"), Path("v.ARW"), Path("v2.ARW")])
+    assert [r["orientation"] for r in recs] == ["landscape", "portrait", "portrait"]
+    for r in recs:
+        # the raw int must not leak into the normalized record
+        assert "_orientation_raw" not in r
+
+
+def test_flash_bitfield_to_bool(monkeypatch) -> None:
+    """Flash low bit = 'flash fired'. 16 = on but did-not-fire; 1 = fired."""
+    fake_stdout = json.dumps([
+        {"SourceFile": "off.ARW",    "Flash": 0},
+        {"SourceFile": "noFire.ARW", "Flash": 16},
+        {"SourceFile": "fired.ARW",  "Flash": 1},
+        {"SourceFile": "fireRed.ARW","Flash": 0x49},  # fired + red-eye reduction
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    recs = exif.batch_read([Path("a"), Path("b"), Path("c"), Path("d")])
+    assert [r["flash"] for r in recs] == [False, False, True, True]
+
+
+def test_gps_presence_derived(monkeypatch) -> None:
+    """`gps` == True only when BOTH lat and lon are present."""
+    fake_stdout = json.dumps([
+        {"SourceFile": "with.ARW",    "GPSLatitude": 39.9, "GPSLongitude": 116.4},
+        {"SourceFile": "without.ARW", "Model": "X"},
+        {"SourceFile": "half.ARW",    "GPSLatitude": 39.9},
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    recs = exif.batch_read([Path("a"), Path("b"), Path("c")])
+    assert recs[0]["gps"] is True
+    assert recs[0]["gps_lat"] == 39.9 and recs[0]["gps_lon"] == 116.4
+    assert "gps" not in recs[1]
+    assert "gps" not in recs[2]  # only lat, no lon → not "has GPS"
+
+
+def test_bias_and_rating_passthrough(monkeypatch) -> None:
+    fake_stdout = json.dumps([
+        {"SourceFile": "a", "ExposureCompensation": -1.5, "Rating": 4},
+        {"SourceFile": "b", "ExposureCompensation": 0,    "Rating": 0},
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    recs = exif.batch_read([Path("a"), Path("b")])
+    assert recs[0]["bias"] == -1.5
+    assert recs[0]["rating"] == 4
+    assert recs[1]["rating"] == 0
+
+
 def test_missing_exiftool_raises_human_message(monkeypatch) -> None:
     monkeypatch.setattr(exif.shutil, "which", lambda _x: None)
     with pytest.raises(exif.ExiftoolMissing) as ei:

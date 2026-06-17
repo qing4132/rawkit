@@ -95,22 +95,32 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 | `fnumber` | 数值 | 光圈,如 2.8 |
 | `shutter` | 数值(秒) | 曝光时间,如 0.004 = 1/250 |
 | `focal` | 数值(mm) | **实际拍摄焦段**(变焦头会随每张变) |
+| `bias` | 数值(EV) | 曝光补偿, +/- |
+| `rating` | 数值 0–5 | LrC / Bridge 等打的星标 |
+| `gps_lat` | 数值 | GPS 纬度(带符号,南半球为负) |
+| `gps_lon` | 数值 | GPS 经度(带符号,西半球为负) |
 | `lens` | 字符串 | LensModel |
 | `model` | 字符串 | 机型,如 "Canon EOS R5" |
 | `maker` | 字符串 | 厂商,如 "SONY" / "Canon" |
+| `orientation` | 字符串 | `"landscape"` 或 `"portrait"`(从 EXIF Orientation 推导) |
 | `date` | 字符串 | `YYYY-MM-DD HH:MM:SS` |
 | `time` | 字符串 | `HH:MM`(从 date 派生) |
+| `gps` | 布尔 | `true` 仅当 lat 和 lon 都存在 |
+| `flash` | 布尔 | 闪光灯实际击发了为 `true` |
 
 #### 操作符
 
 | 操作 | 适用 | 例子 |
 |---|---|---|
 | `> < >= <= == !=` | 数值 / 字符串 / 日期 / 时间 | `iso>3200`, `date>="2024-01-01"`, `time<"06:00"` |
+| `== !=` (仅) | 布尔字段(`gps`/`flash`) | `gps==true`, `flash!=true` |
 | `~` | 字符串(大小写不敏感**子串**包含) | `lens~"GM"`, `model~"R5"` |
 | `and` / `or` / `not` | 逻辑组合 | `iso>800 and not lens~"24-70"` |
 | `(...)` | 优先级括号 | `(focal>=70 and focal<=200) or lens~"70-200"` |
 
 **优先级**:括号 > `not` > `and` > `or`。
+
+**字面量**:`123`、`1.5`、`-2.0`(数值);`"..."`(字符串);`YYYY-MM-DD`(日期);`HH:MM`(时间);`true` / `false`(布尔)。
 
 #### 例子(由浅入深)
 
@@ -144,6 +154,28 @@ rawkit ls ~/Pictures --where 'date>="2024-10-01" and date<"2024-11-01"'
 
 # 复杂组合
 rawkit ls ~/Pictures --where '(iso>=3200 and fnumber<2.8) or shutter>=1' --json | jq '.path'
+
+# 只要竖构图(粗选时最常用)
+rawkit ls ~/Pictures --where 'orientation=="portrait"'
+
+# 加头灯亮起来的
+rawkit ls ~/Pictures --where 'flash==true'
+
+# 在北京的所有片(粗略的 GPS box)
+rawkit ls ~/Pictures --where 'gps_lat>39 and gps_lat<41 and gps_lon>115 and gps_lon<117'
+
+# 有 GPS 但不在某个区域(反选主页)
+rawkit ls ~/Pictures --where 'gps==true and not (gps_lat>39 and gps_lat<41)'
+
+# 推 / 拉过曝光的片
+rawkit ls ~/Pictures --where 'bias>=1'
+rawkit ls ~/Pictures --where 'bias<=-1'
+
+# 你在 LrC 里打过 3 星及以上的精选(前提:sidecar .xmp 存在)
+rawkit ls ~/Pictures --where 'rating>=3'
+
+# “culling 后的 keepers” 复合查询
+rawkit ls ~/Pictures --where 'rating>=3 and orientation=="landscape" and flash==false'
 ```
 
 #### 容易踩的坑

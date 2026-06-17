@@ -44,6 +44,21 @@ R_RICOH_NO_LENS = {  # fixed-lens compact, LensModel absent
     "focal": 18.3,
 }
 
+# Synthetic records to exercise the new fields (orientation/gps/bias/flash/rating).
+R_PORTRAIT = {**R_SONY, "path": "/x/portrait.ARW", "orientation": "portrait"}
+R_LANDSCAPE = {**R_SONY, "path": "/x/landscape.ARW", "orientation": "landscape"}
+R_GPS_BJ = {
+    **R_SONY, "path": "/x/bj.ARW",
+    "gps": True, "gps_lat": 39.9, "gps_lon": 116.4,
+}
+R_NO_GPS = {**R_SONY, "path": "/x/nogps.ARW"}
+R_FLASH = {**R_SONY, "path": "/x/flash.ARW", "flash": True}
+R_NO_FLASH = {**R_SONY, "path": "/x/noflash.ARW", "flash": False}
+R_PUSHED = {**R_SONY, "path": "/x/pushed.ARW", "bias": 1.5}
+R_PULLED = {**R_SONY, "path": "/x/pulled.ARW", "bias": -2.0}
+R_RATED4 = {**R_SONY, "path": "/x/r4.ARW", "rating": 4}
+R_RATED1 = {**R_SONY, "path": "/x/r1.ARW", "rating": 1}
+
 ALL = [R_SONY, R_CANON, R_RICOH_NO_LENS]
 
 
@@ -182,3 +197,89 @@ def test_type_mismatch_string_field_with_number() -> None:
 def test_match_op_rejected_on_numeric_field() -> None:
     with pytest.raises(QueryError, match="substring"):
         compile_where('iso ~ "800"')
+
+
+# --- new fields: orientation -----------------------------------------------
+
+def test_orientation_filter() -> None:
+    pred = compile_where('orientation == "portrait"')
+    assert pred(R_PORTRAIT) is True
+    assert pred(R_LANDSCAPE) is False
+    # records without orientation key
+    assert pred(R_SONY) is False
+
+
+# --- new fields: gps (boolean) + gps_lat/gps_lon (numeric box) -------------
+
+def test_gps_boolean() -> None:
+    pred = compile_where('gps == true')
+    assert pred(R_GPS_BJ) is True
+    assert pred(R_NO_GPS) is False
+
+
+def test_gps_negation() -> None:
+    pred = compile_where('gps != true')
+    assert pred(R_NO_GPS) is True
+    assert pred(R_GPS_BJ) is False
+
+
+def test_gps_bounding_box_beijing() -> None:
+    # Rough Beijing box: 39°<lat<41°, 115°<lon<117°.
+    pred = compile_where(
+        'gps_lat>39 and gps_lat<41 and gps_lon>115 and gps_lon<117'
+    )
+    assert pred(R_GPS_BJ) is True
+    far = {**R_GPS_BJ, "gps_lat": 31.2, "gps_lon": 121.5}  # Shanghai
+    assert pred(far) is False
+    # Records lacking GPS at all must evaluate False (don't crash).
+    assert pred(R_NO_GPS) is False
+
+
+def test_bool_field_rejects_inequality_operators() -> None:
+    for op in ("<", "<=", ">", ">="):
+        with pytest.raises(QueryError, match="only supports `==` and `!=`"):
+            compile_where(f"gps {op} true")
+
+
+def test_bool_field_rejects_non_bool_literal() -> None:
+    with pytest.raises(QueryError, match="boolean"):
+        compile_where('gps == 1')
+
+
+# --- new fields: flash ------------------------------------------------------
+
+def test_flash_filter() -> None:
+    fired = compile_where('flash == true')
+    assert fired(R_FLASH) is True
+    assert fired(R_NO_FLASH) is False
+    # Missing flash key treated as 'did not fire' (most mirrorless never wrote
+    # the tag with the default "off" setting).
+    assert fired(R_SONY) is False
+
+
+# --- new fields: bias / rating ---------------------------------------------
+
+def test_bias_pushed_shots() -> None:
+    pred = compile_where('bias>=1')
+    assert pred(R_PUSHED) is True
+    assert pred(R_PULLED) is False
+    assert pred(R_SONY) is False  # absent bias → numeric coerce fails → False
+
+
+def test_rating_threshold() -> None:
+    pred = compile_where('rating>=3')
+    assert pred(R_RATED4) is True
+    assert pred(R_RATED1) is False
+
+
+# --- combined real-world queries -------------------------------------------
+
+def test_keepers_query() -> None:
+    """Typical cull predicate: 'high-rated, horizontal, no flash'."""
+    pred = compile_where(
+        'rating>=3 and orientation=="landscape" and flash==false'
+    )
+    keeper = {**R_RATED4, "orientation": "landscape", "flash": False}
+    drop = {**R_RATED4, "orientation": "portrait", "flash": False}
+    assert pred(keeper) is True
+    assert pred(drop) is False

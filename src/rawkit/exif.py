@@ -21,17 +21,25 @@ import typer
 
 # (exiftool tag, rawkit normalized key) pairs. The normalized keys are the
 # same vocabulary used by the README's --where DSL grammar, so JSON output
-# and future query expressions stay aligned.
+# and future query expressions stay aligned. Some keys (`orientation`,
+# `flash`, `gps`) are *derived* in _normalize() rather than directly mapped.
 _FIELD_MAP: tuple[tuple[str, str], ...] = (
-    ("SourceFile", "path"),
-    ("DateTimeOriginal", "date"),
-    ("Make", "maker"),
-    ("Model", "model"),
-    ("LensModel", "lens"),
-    ("ISO", "iso"),
-    ("FNumber", "fnumber"),
-    ("ExposureTime", "shutter"),
-    ("FocalLength", "focal"),
+    ("SourceFile",         "path"),
+    ("DateTimeOriginal",   "date"),
+    ("Make",               "maker"),
+    ("Model",              "model"),
+    ("LensModel",          "lens"),
+    ("ISO",                "iso"),
+    ("FNumber",            "fnumber"),
+    ("ExposureTime",       "shutter"),
+    ("FocalLength",        "focal"),
+    ("ExposureCompensation", "bias"),  # exiftool exposes EV bias under this name
+    ("Rating",             "rating"),
+    ("GPSLatitude",        "gps_lat"),
+    ("GPSLongitude",       "gps_lon"),
+    # The next two are read raw and then derived into typed fields below.
+    ("Orientation",        "_orientation_raw"),
+    ("Flash",              "_flash_raw"),
 )
 
 
@@ -92,6 +100,35 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     d = out.get("date")
     if isinstance(d, str) and len(d) >= 10 and d[4] == ":" and d[7] == ":":
         out["date"] = d[:4] + "-" + d[5:7] + "-" + d[8:]
+
+    # orientation: EXIF tag is 1..8 (an enum). Map to a human-friendly string.
+    # Values 1/2/3/4 mean the image is naturally landscape-oriented (top edge
+    # is at the top or bottom); 5/6/7/8 mean the camera was held vertically.
+    raw_o = out.pop("_orientation_raw", None)
+    if raw_o is not None:
+        try:
+            o = int(raw_o)
+            if o in (5, 6, 7, 8):
+                out["orientation"] = "portrait"
+            elif o in (1, 2, 3, 4):
+                out["orientation"] = "landscape"
+        except (TypeError, ValueError):
+            pass
+
+    # flash: the EXIF Flash tag is a bitfield. With -n exiftool returns it as
+    # an integer; the low bit (1) means 'flash fired'. Expose as bool.
+    raw_f = out.pop("_flash_raw", None)
+    if raw_f is not None:
+        try:
+            out["flash"] = bool(int(raw_f) & 1)
+        except (TypeError, ValueError):
+            pass
+
+    # gps: convenience boolean meaning 'has usable coordinates'. The lat/lon
+    # numbers are already exposed under gps_lat / gps_lon for box queries.
+    if "gps_lat" in out and "gps_lon" in out:
+        out["gps"] = True
+
     return out
 
 

@@ -47,28 +47,38 @@ _GRAMMAR = r"""
 comparison: FIELD CMP value
 match:      FIELD "~" STRING
 
-FIELD: "iso"|"fnumber"|"shutter"|"focal"|"lens"|"model"|"maker"|"date"|"time"
+FIELD: "iso"|"fnumber"|"shutter"|"focal"|"bias"|"rating"
+     | "gps_lat"|"gps_lon"
+     | "lens"|"model"|"maker"|"orientation"
+     | "date"|"time"
+     | "gps"|"flash"
 CMP:   ">=" | "<=" | "==" | "!=" | ">" | "<"
 
 ?value: NUMBER  -> number
       | STRING  -> string
       | DATE    -> date_literal
       | TIME    -> time_literal
+      | BOOL    -> bool_literal
 
 NUMBER: /-?\d+(\.\d+)?/
 STRING: /"[^"]*"/
 DATE:   /\d{4}-\d{2}-\d{2}/
 TIME:   /\d{2}:\d{2}/
+BOOL:   "true" | "false"
 
 %import common.WS
 %ignore WS
 """
 
 
-_NUMERIC_FIELDS: frozenset[str] = frozenset({"iso", "fnumber", "shutter", "focal"})
-_STRING_FIELDS:  frozenset[str] = frozenset({"lens", "model", "maker"})
+_NUMERIC_FIELDS: frozenset[str] = frozenset({
+    "iso", "fnumber", "shutter", "focal",
+    "bias", "rating", "gps_lat", "gps_lon",
+})
+_STRING_FIELDS:  frozenset[str] = frozenset({"lens", "model", "maker", "orientation"})
 _DATE_FIELDS:    frozenset[str] = frozenset({"date"})
 _TIME_FIELDS:    frozenset[str] = frozenset({"time"})
+_BOOL_FIELDS:    frozenset[str] = frozenset({"gps", "flash"})
 
 
 # --- evaluation tree --------------------------------------------------------
@@ -124,6 +134,9 @@ class _Builder(Transformer):
     def time_literal(self, tok: Token) -> tuple[str, str]:
         return ("time", str(tok))  # 'HH:MM'
 
+    def bool_literal(self, tok: Token) -> tuple[str, bool]:
+        return ("bool", str(tok) == "true")
+
     # comparison: FIELD CMP value
     def comparison(self, field: Token, cmp: Token, value) -> Predicate:
         field_name = str(field)
@@ -149,12 +162,31 @@ class _Builder(Transformer):
             raise QueryError(
                 f"field `time` expects HH:MM (got a {kind})"
             )
+        if field_name in _BOOL_FIELDS:
+            if kind != "bool":
+                raise QueryError(
+                    f"field `{field_name}` is boolean; use `==true` or `==false`"
+                )
+            if op not in ("==", "!="):
+                raise QueryError(
+                    f"boolean field `{field_name}` only supports `==` and `!=`"
+                )
 
         if kind == "num":
             def pred(rec: dict[str, Any]) -> bool:
                 lhs = _coerce_numeric(_record_field(rec, field_name))
                 return False if lhs is None else op_fn(lhs, literal)
             return pred
+
+        if kind == "bool":
+            def pred_bool(rec: dict[str, Any]) -> bool:
+                lhs = _record_field(rec, field_name)
+                # Treat missing-bool as False so `flash==false` includes shots
+                # whose camera didn't write a Flash tag at all (common on
+                # mirrorless when flash is off).
+                lhs_b = bool(lhs) if lhs is not None else False
+                return op_fn(lhs_b, literal)
+            return pred_bool
 
         # string / date / time → string-compare. Both sides lowercased for ==/!= on strings.
         def pred_str(rec: dict[str, Any]) -> bool:
