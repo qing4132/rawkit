@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import typer
 
@@ -14,25 +15,49 @@ def _root() -> None:
     # Forces typer to keep subcommand structure even when only one command exists.
     pass
 
-# v0.0.1: minimal RAW extension whitelist. Expand as new sample formats arrive.
+# Authoritative RAW extension set — intersection of libraw 0.21, dcraw, darktable
+# 5.x and RawTherapee. Stills only; cinema/video RAW (R3D, BRAW, ARI) excluded
+# because rawkit targets photo workflows. Update this set when a new still camera
+# maker introduces a new extension.
 RAW_EXTS: frozenset[str] = frozenset({
-    ".arw",   # Sony
-    ".cr2",   # Canon (older)
-    ".cr3",   # Canon (newer)
-    ".nef",   # Nikon
-    ".nrw",   # Nikon (small)
-    ".raf",   # Fujifilm
-    ".dng",   # Adobe / Leica / Pentax / Ricoh
-    ".orf",   # Olympus / OM System
-    ".rw2",   # Panasonic
     ".3fr",   # Hasselblad
+    ".arw",   # Sony
+    ".bay",   # Casio
+    ".cap",   # Phase One (legacy)
+    ".cr2",   # Canon (2004–2018)
+    ".cr3",   # Canon (2018+)
+    ".crw",   # Canon (legacy, pre-2004)
+    ".dcr",   # Kodak
+    ".dcs",   # Kodak
+    ".dng",   # Adobe / Leica / Pentax / Ricoh / Apple ProRAW / DJI / iPhone
+    ".drf",   # Kodak
+    ".eip",   # Phase One (enhanced)
+    ".erf",   # Epson
     ".fff",   # Hasselblad / Imacon
-    ".rwl",   # Leica
-    ".pef",   # Pentax
-    ".srw",   # Samsung
-    ".x3f",   # Sigma
-    ".iiq",   # Phase One
     ".gpr",   # GoPro
+    ".iiq",   # Phase One
+    ".k25",   # Kodak (DC25)
+    ".kdc",   # Kodak
+    ".mdc",   # Minolta
+    ".mef",   # Mamiya
+    ".mos",   # Leaf / Mamiya
+    ".mrw",   # Minolta
+    ".nef",   # Nikon
+    ".nrw",   # Nikon (compact)
+    ".orf",   # Olympus / OM System
+    ".ori",   # Olympus (legacy)
+    ".pef",   # Pentax
+    ".ptx",   # Pentax (legacy)
+    ".pxn",   # Logitech
+    ".raf",   # Fujifilm
+    ".raw",   # Panasonic / Leica (legacy generic name)
+    ".rw2",   # Panasonic
+    ".rwl",   # Leica
+    ".rwz",   # Rawzor (compressed wrapper)
+    ".sr2",   # Sony (legacy, A100 era)
+    ".srf",   # Sony (legacy, F828 / R1)
+    ".srw",   # Samsung
+    ".x3f",   # Sigma (Foveon)
 })
 
 
@@ -48,6 +73,15 @@ def ls(
     ),
 ) -> None:
     """List RAW files recursively under DIRECTORY (paths only, one per line)."""
-    for p in sorted(directory.rglob("*")):
-        if p.is_file() and p.suffix.lower() in RAW_EXTS:
-            typer.echo(p)
+    # os.walk over pathlib.rglob: silently skips unreadable subtrees and does
+    # not follow symlinks (avoids infinite cycles in real photo libraries).
+    found: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(
+        directory, onerror=lambda _e: None, followlinks=False
+    ):
+        for name in filenames:
+            p = Path(dirpath) / name
+            if p.suffix.lower() in RAW_EXTS:
+                found.append(p)
+    for p in sorted(found):
+        typer.echo(p)
