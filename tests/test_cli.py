@@ -37,6 +37,7 @@ def fake_exif(monkeypatch):
                 "fnumber": 1.4,
                 "shutter": 0.004,
                 "focal": 50,
+                "bias": -1.0,
             }
             for p in paths
         ]
@@ -146,7 +147,7 @@ def test_ls_json_emits_jsonl(tmp_path, fake_exif) -> None:
 
 
 def test_ls_table_formats_human_values(tmp_path, fake_exif) -> None:
-    """0.004s → '1/250'; 1.4 → 'f/1.4'; date trimmed to minute."""
+    """0.004s → '1/250'; 1.4 → 'f/1.4'; date trimmed to minute; bias signed."""
     (tmp_path / "a.ARW").write_bytes(b"")
 
     result = runner.invoke(app, ["ls", str(tmp_path)])
@@ -156,6 +157,8 @@ def test_ls_table_formats_human_values(tmp_path, fake_exif) -> None:
     assert "f/1.4" in out
     assert "2024-01-02 03:04" in out
     assert "50mm" in out
+    assert "bias" in out      # header is present
+    assert "-1" in out        # bias value rendered with sign-aware format
 
 
 def test_shutter_formatting_edge_cases() -> None:
@@ -169,6 +172,19 @@ def test_shutter_formatting_edge_cases() -> None:
     assert _fmt_shutter(1.3) == "1.3s"
     assert _fmt_shutter(30) == "30s"
     assert _fmt_shutter(None) == "-"
+
+
+def test_bias_formatting() -> None:
+    """bias displays with explicit sign so +/- is visible at a glance."""
+    from rawkit.cli import _fmt_bias
+
+    assert _fmt_bias(None) == "-"          # absent (no Bias tag)
+    assert _fmt_bias(0) == "0"              # in-camera says 'no compensation'
+    assert _fmt_bias(0.0) == "0"
+    assert _fmt_bias(1) == "+1"             # whole stops drop trailing zeros
+    assert _fmt_bias(0.6666666) == "+0.67"  # +2/3 EV, rounded to 2 decimals
+    assert _fmt_bias(-2.416666667) == "-2.42"
+    assert _fmt_bias("weird") == "weird"
 
 
 # --- multi-input handling ---------------------------------------------------

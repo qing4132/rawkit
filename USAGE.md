@@ -54,9 +54,10 @@ file          date              model         lens                ...
 ...
 ```
 
-列:`file  date  model  lens  iso  aperture  shutter  focal`
+列:`file  date  model  lens  iso  aperture  shutter  bias  focal`
 
 - 时间是 **EXIF 拍摄时间**(不是文件 mtime)
+- `bias` 是曝光补偿 EV,带符号(`+1` / `-2.42` / `0`),缺失为 `-`
 - 表格按内容自适应宽度,**不截断**;窄终端用 `| less -S` 横向滚屏
 - 单个超长文件名只破自己那行,其它行保持对齐
 

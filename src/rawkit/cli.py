@@ -179,6 +179,19 @@ def _fmt_focal(v: Any) -> str:
         return str(v)
 
 
+def _fmt_bias(v: Any) -> str:
+    """0 → '0'; +1 → '+1'; -2.41667 → '-2.42'; absent → '-'."""
+    if v is None:
+        return "-"
+    try:
+        b = round(float(v), 2)
+    except (TypeError, ValueError):
+        return str(v)
+    if b == 0:
+        return "0"
+    return f"{b:+g}"  # the + format spec keeps signs on positive values too
+
+
 _TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # (header, normalized key, alignment)  alignment: 'l' = left, 'r' = right
     ("file",     "_filename", "l"),
@@ -188,6 +201,7 @@ _TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("iso",      "iso",       "r"),
     ("aperture", "fnumber",   "r"),
     ("shutter",  "shutter",   "r"),
+    ("bias",     "bias",      "r"),
     ("focal",    "focal",     "r"),
 )
 
@@ -197,6 +211,7 @@ _FORMATTERS = {
     "fnumber": _fmt_fnumber,
     "shutter": _fmt_shutter,
     "focal":   _fmt_focal,
+    "bias":    _fmt_bias,
 }
 
 _BOLD = "\x1b[1m"
