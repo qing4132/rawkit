@@ -1,0 +1,192 @@
+# rawkit — 用法手册
+
+> 这是**用法**文档,不是设计文档。每加一个功能就往这里追加示例。
+> 设计/原则/路线图见 [README.md](README.md)。
+>
+> 当前可用命令:`rawkit ls`。
+
+---
+
+## 装 & 跑
+
+```bash
+# 在 rawkit 项目目录内一次性装为全局工具(editable):
+uv tool install --editable .
+
+# 之后任何 terminal 任何 cwd:
+rawkit --help
+rawkit ls --help
+```
+
+依赖:**需要系统装 `exiftool`**。
+- macOS:`brew install exiftool`
+- Debian/Ubuntu:`apt install libimage-exiftool-perl`
+- 没装时 rawkit 会人话提示。
+
+---
+
+## `rawkit ls`
+
+列出 RAW 文件并展示关键 EXIF。是 `rawkit` 的入口命令。
+
+### 签名
+```
+rawkit ls [PATHS...] [-w/--where EXPR] [--json]
+```
+
+- `PATHS`:零个或多个**目录或 RAW 文件**。无参数 = 当前目录。目录递归扫(不跟符号链接,不进无权限子目录)。
+- `--where EXPR`:按 EXIF 条件过滤,见下方 DSL 参考。
+- `--json`:输出 JSONL(每行一对象),给 `jq` 等管道。默认是人读对齐表。
+
+### 退出码
+- `0` 成功
+- `1` 部分失败(如某个路径不存在)
+- `2` 用法错(如 `--where` 表达式语法错)
+
+### 默认表格输出
+
+```bash
+rawkit ls samples/
+```
+```
+file          date              model         lens                ...
+168A0721.CR3  2022-05-13 16:38  Canon EOS R5  RF800mm F11 IS STM  ...
+...
+```
+
+列:`file  date  model  lens  iso  aperture  shutter  focal`
+
+- 时间是 **EXIF 拍摄时间**(不是文件 mtime)
+- 表格按内容自适应宽度,**不截断**;窄终端用 `| less -S` 横向滚屏
+- 单个超长文件名只破自己那行,其它行保持对齐
+
+### 多路径 / 文件混合
+```bash
+rawkit ls ~/Pictures/2024-10 ~/Pictures/2024-11
+rawkit ls samples/168A0721.CR3 samples/_DSC4187.ARW
+rawkit ls samples/_DSC4187.ARW samples/         # 文件 + 目录混合,自动去重
+```
+
+不存在的路径 → stderr 报错并退出 1;非 RAW 文件 → stderr 警告并跳过。
+
+### JSON 输出(管道用)
+```bash
+rawkit ls samples/ --json
+```
+```jsonl
+{"path": "samples/168A0721.CR3", "date": "2022-05-13 16:38:09", "maker": "Canon", "model": "Canon EOS R5", "lens": "RF800mm F11 IS STM", "iso": 400, "fnumber": 11, "shutter": 0.00625, "focal": 800}
+...
+```
+
+JSON 字段名与 `--where` DSL 字段名完全一致。
+
+```bash
+# 找所有高 ISO 的路径,喂给别的工具
+rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
+```
+
+### `--where` 表达式 DSL
+
+#### 字段
+
+| 字段 | 类型 | 来源 |
+|---|---|---|
+| `iso` | 数值 | EXIF ISO |
+| `fnumber` | 数值 | 光圈,如 2.8 |
+| `shutter` | 数值(秒) | 曝光时间,如 0.004 = 1/250 |
+| `focal` | 数值(mm) | **实际拍摄焦段**(变焦头会随每张变) |
+| `lens` | 字符串 | LensModel |
+| `model` | 字符串 | 机型,如 "Canon EOS R5" |
+| `maker` | 字符串 | 厂商,如 "SONY" / "Canon" |
+| `date` | 字符串 | `YYYY-MM-DD HH:MM:SS` |
+| `time` | 字符串 | `HH:MM`(从 date 派生) |
+
+#### 操作符
+
+| 操作 | 适用 | 例子 |
+|---|---|---|
+| `> < >= <= == !=` | 数值 / 字符串 / 日期 / 时间 | `iso>3200`, `date>="2024-01-01"`, `time<"06:00"` |
+| `~` | 字符串(大小写不敏感**子串**包含) | `lens~"GM"`, `model~"R5"` |
+| `and` / `or` / `not` | 逻辑组合 | `iso>800 and not lens~"24-70"` |
+| `(...)` | 优先级括号 | `(focal>=70 and focal<=200) or lens~"70-200"` |
+
+**优先级**:括号 > `not` > `and` > `or`。
+
+#### 例子(由浅入深)
+
+```bash
+# 高 ISO 的(暗光/夜拍)
+rawkit ls samples/ --where 'iso>=1000'
+
+# 大光圈
+rawkit ls samples/ --where 'fnumber<2.0'
+
+# 长曝(≥1 秒)
+rawkit ls samples/ --where 'shutter>=1'
+
+# 50mm 焦段(任何镜头实际转到 50mm)
+rawkit ls samples/ --where 'focal==50'
+
+# 中焦段(70–200 区间,既覆盖变焦也覆盖定焦)
+rawkit ls samples/ --where 'focal>=70 and focal<=200'
+
+# 用某个具体镜头(GM 头系列)
+rawkit ls samples/ --where 'lens~"GM"'
+
+# Canon 拍的夜景
+rawkit ls samples/ --where 'maker~"canon" and time>="20:00"'
+
+# 不要 iPhone 拍的
+rawkit ls ~/Pictures --where 'not model~"iphone"'
+
+# 某天某时间段
+rawkit ls ~/Pictures --where 'date>="2024-10-01" and date<"2024-11-01"'
+
+# 复杂组合
+rawkit ls ~/Pictures --where '(iso>=3200 and fnumber<2.8) or shutter>=1' --json | jq '.path'
+```
+
+#### 容易踩的坑
+
+1. **子串匹配会"误伤数字"**
+   `lens~"50"` 会命中 "E 70-**3<u>50</u>**mm"(里面有 "50" 两字符)。
+   想表达"50mm 拍的"应用 **`focal==50`**(更准,且能捞到变焦头转到 50mm 的那张)。
+
+2. **`shutter` 用秒数,不是 "1/250"**
+   `shutter<=1/250` ❌ — DSL 不算式子。
+   `shutter<=0.004` ✅。
+   未来如果加分式字面量再说,现在先用十进制。
+
+3. **`date` 必须是 `YYYY-MM-DD`,中间是连字符**
+   `date>="2024:01:01"` ❌(EXIF 旧格式)
+   `date>="2024-01-01"` ✅
+
+4. **字符串字段不能用数字比较**
+   `lens==50` ❌ — 编译期报错。
+   `lens~"50mm"` 才对(且小心上面第 1 条)。
+
+5. **缺失字段视为不匹配**
+   RICOH GR III 这种定焦机没有 `LensModel`,任何 `lens~"..."` 都不会命中它。
+
+#### 错误信息长这样
+
+```bash
+rawkit ls samples/ --where 'iso > and 5'
+# rawkit: --where: can't parse --where at line 1, column 7:
+# iso > and 5
+#       ^
+```
+
+退出码 2(用法错,与 grep/find 一致)。
+
+---
+
+## 还没做的(早晚加,加完就把示例写到这里)
+
+- `rawkit thumb` — 抽 RAW 内嵌缩略图
+- `rawkit export` — rawpy 全解码导出 JPEG/PNG
+- `--sort time|iso|...` + `-r/--reverse` — 排序
+- `--no-recurse` — 关掉默认递归
+- 文件大小列(可选)
+
+详细愿景见 [README.md](README.md)。
