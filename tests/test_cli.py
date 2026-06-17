@@ -411,6 +411,24 @@ def test_ls_sort_invalid_key_errors(tmp_path, fake_exif) -> None:
     assert "sort" in out or "invalid" in out or "value" in out
 
 
+def test_ls_sort_breaks_ties_by_subsecond(tmp_path, monkeypatch) -> None:
+    """Burst frames at the same wall-clock second must sort by sub-second."""
+    def fake(paths):
+        # Three frames recorded within one second, written out of order.
+        return [
+            {"path": str(paths[0]), "datetime": "2024-01-01 00:00:00.900"},  # latest
+            {"path": str(paths[1]), "datetime": "2024-01-01 00:00:00.247"},
+            {"path": str(paths[2]), "datetime": "2024-01-01 00:00:00.01"},   # earliest
+        ]
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
+    _make_three(tmp_path)
+
+    result = runner.invoke(app, ["ls", str(tmp_path), "--json"])
+    assert result.exit_code == 0
+    # Expected chronological order: .01 → .247 → .9
+    assert _basenames_from_json(result.stdout) == ["c.NEF", "b.CR3", "a.ARW"]
+
+
 def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
     """A 79-char outlier filename must break alignment only on its own row,
     not pad every other row's file column."""

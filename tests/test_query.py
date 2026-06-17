@@ -143,6 +143,20 @@ def test_datetime_accepts_date_only_literal() -> None:
     assert _filter('datetime>="2024-01-01"', [R_SONY, R_CANON]) == [R_SONY]
 
 
+def test_subsecond_in_time_literal() -> None:
+    """TIME literal accepts '.NNN' suffix; records with subsec compare correctly."""
+    rec_early = {**R_SONY, "time": "12:34:56.100"}
+    rec_late  = {**R_SONY, "time": "12:34:56.900"}
+    # Filter > 0.5 sec into that second.
+    assert _filter('time>="12:34:56.500"', [rec_early, rec_late]) == [rec_late]
+
+
+def test_subsecond_in_datetime_literal() -> None:
+    rec_a = {**R_SONY, "datetime": "2024-10-27 17:09:43.100"}
+    rec_b = {**R_SONY, "datetime": "2024-10-27 17:09:43.900"}
+    assert _filter('datetime>"2024-10-27 17:09:43.500"', [rec_a, rec_b]) == [rec_b]
+
+
 # --- logical combinators + precedence ---------------------------------------
 
 def test_and_combines() -> None:

@@ -25,7 +25,8 @@ import typer
 # `flash`, `gps`) are *derived* in _normalize() rather than directly mapped.
 _FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("SourceFile",         "path"),
-    ("DateTimeOriginal",   "datetime"),  # full 'YYYY-MM-DD HH:MM:SS'; `date` and `time` are derived below
+    ("DateTimeOriginal",   "datetime"),  # 'YYYY-MM-DD HH:MM:SS'; `date`, `time` derived below
+    ("SubSecTimeOriginal", "_subsec_raw"),  # fractional second as a digit string, e.g. '048' = .048s
     ("Make",               "maker"),
     ("Model",              "model"),
     ("LensModel",          "lens"),
@@ -98,15 +99,23 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     # exiftool returns 'YYYY:MM:DD HH:MM:SS' (legacy EXIF format with colons in
     # the date part). We expose three string fields so DSL queries can target
     # the precision the user actually means:
-    #   datetime = 'YYYY-MM-DD HH:MM:SS'  (full, lexicographically sortable)
-    #   date     = 'YYYY-MM-DD'           (calendar day)
-    #   time     = 'HH:MM:SS'             (time of day)
+    #   datetime = 'YYYY-MM-DD HH:MM:SS[.NNN]'  (full, lexicographically sortable)
+    #   date     = 'YYYY-MM-DD'                 (calendar day)
+    #   time     = 'HH:MM:SS[.NNN]'             (time of day; sub-second when available)
+    #
+    # SubSecTimeOriginal — when the camera writes it — adds the fractional part
+    # so burst frames within the same second sort in the correct order even
+    # after the user renames the files.
     dt = out.get("datetime")
+    subsec = out.pop("_subsec_raw", None)
     if isinstance(dt, str) and len(dt) >= 19 and dt[4] == ":" and dt[7] == ":":
         normalized = dt[:4] + "-" + dt[5:7] + "-" + dt[8:]
-        out["datetime"] = normalized
+        suffix = ""
+        if isinstance(subsec, str) and subsec.strip():
+            suffix = "." + subsec.strip()
+        out["datetime"] = normalized + suffix
         out["date"] = normalized[:10]
-        out["time"] = normalized[11:19]
+        out["time"] = normalized[11:19] + suffix
 
     raw_o = out.pop("_orientation_raw", None)
     if raw_o is not None:

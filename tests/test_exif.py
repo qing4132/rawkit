@@ -79,6 +79,77 @@ def test_batch_read_missing_fields_omitted(monkeypatch) -> None:
     assert r["model"] == "RICOH GR III"
 
 
+def test_subsec_appended_to_datetime_and_time(monkeypatch) -> None:
+    """SubSecTimeOriginal must end up as a '.NNN' suffix on datetime and time
+    (but NOT on date — that stays YYYY-MM-DD)."""
+    fake_stdout = json.dumps([
+        {
+            "SourceFile": "burst.CR3",
+            "DateTimeOriginal": "2024:10:27 17:09:43",
+            "SubSecTimeOriginal": "048",
+        }
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    [r] = exif.batch_read([Path("burst.CR3")])
+    assert r["datetime"] == "2024-10-27 17:09:43.048"
+    assert r["time"]     == "17:09:43.048"
+    assert r["date"]     == "2024-10-27"  # date never gets subsec
+    assert "_subsec_raw" not in r          # internal key must not leak
+
+
+def test_subsec_absent_leaves_datetime_clean(monkeypatch) -> None:
+    """Camera that didn't write SubSecTime → datetime stays at second precision."""
+    fake_stdout = json.dumps([
+        {
+            "SourceFile": "no_subsec.ARW",
+            "DateTimeOriginal": "2024:10:27 17:09:43",
+        }
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    [r] = exif.batch_read([Path("no_subsec.ARW")])
+    assert r["datetime"] == "2024-10-27 17:09:43"
+    assert r["time"]     == "17:09:43"
+
+
+def test_subsec_lexical_order_matches_time_order(monkeypatch) -> None:
+    """Lex compare of variable-length subsec strings must match real time
+    order (no need to pad). This is the property the sort relies on."""
+    fake_stdout = json.dumps([
+        {"SourceFile": "a", "DateTimeOriginal": "2024:01:01 00:00:00", "SubSecTimeOriginal": "9"},     # .9 sec
+        {"SourceFile": "b", "DateTimeOriginal": "2024:01:01 00:00:00", "SubSecTimeOriginal": "247"},   # .247 sec
+        {"SourceFile": "c", "DateTimeOriginal": "2024:01:01 00:00:00", "SubSecTimeOriginal": "01"},    # .01 sec
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    recs = exif.batch_read([Path("a"), Path("b"), Path("c")])
+    # Sort ascending by datetime; expected chronological order is c (.01) → b (.247) → a (.9).
+    in_order = sorted(recs, key=lambda r: r["datetime"])
+    assert [r["path"] for r in in_order] == ["c", "b", "a"]
+
+
 def test_orientation_landscape_vs_portrait(monkeypatch) -> None:
     fake_stdout = json.dumps([
         {"SourceFile": "h.ARW", "Orientation": 1},  # landscape

@@ -114,9 +114,9 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 | `model` | 字符串 | 机型,如 "Canon EOS R5" |
 | `maker` | 字符串 | 厂商,如 "SONY" / "Canon" |
 | `orientation` | 字符串 | `"landscape"` 或 `"portrait"`(从 EXIF Orientation 推导) |
-| `datetime` | 字符串 | `YYYY-MM-DD HH:MM:SS`(拍摄时间全串) |
+| `datetime` | 字符串 | `YYYY-MM-DD HH:MM:SS[.NNN]`(拍摄时间全串;相机写了 SubSecTime 时带亚秒,用于连拍排序) |
 | `date` | 字符串 | `YYYY-MM-DD`(从 datetime 切出) |
-| `time` | 字符串 | `HH:MM:SS`(从 datetime 切出) |
+| `time` | 字符串 | `HH:MM:SS[.NNN]`(从 datetime 切出) |
 | `gps` | 布尔 | `true` 仅当 lat 和 lon 都存在 |
 | `flash` | 布尔 | 闪光灯实际击发了为 `true` |
 
@@ -132,7 +132,7 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 
 **优先级**:括号 > `not` > `and` > `or`。
 
-**字面量**:`123`、`1.5`、`-2.0`(数值);`"..."`(字符串);`YYYY-MM-DD`(日期);`HH:MM` 或 `HH:MM:SS`(时间);`YYYY-MM-DD HH:MM[:SS]` 或 `YYYY-MM-DDTHH:MM[:SS]`(datetime);`true` / `false`(布尔)。
+**字面量**:`123`、`1.5`、`-2.0`(数值);`"..."`(字符串);`YYYY-MM-DD`(日期);`HH:MM` / `HH:MM:SS` / `HH:MM:SS.NNN`(时间);`YYYY-MM-DD HH:MM[:SS[.NNN]]` 或 `YYYY-MM-DDTHH:MM[:SS[.NNN]]`(datetime);`true` / `false`(布尔)。
 
 #### 例子(由浅入深)
 

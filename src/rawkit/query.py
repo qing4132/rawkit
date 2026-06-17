@@ -63,9 +63,9 @@ CMP:   ">=" | "<=" | "==" | "!=" | ">" | "<"
 
 NUMBER:   /-?\d+(\.\d+)?/
 STRING:   /"[^"]*"/
-DATETIME: /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?/
+DATETIME: /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?/
 DATE:     /\d{4}-\d{2}-\d{2}/
-TIME:     /\d{2}:\d{2}(:\d{2})?/
+TIME:     /\d{2}:\d{2}(:\d{2}(\.\d+)?)?/
 BOOL:     "true" | "false"
 
 %import common.WS
