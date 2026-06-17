@@ -1,0 +1,24 @@
+[project]
+name = "rawkit"
+version = "0.0.1"
+description = "RAW photography swiss-army CLI (internal preview)."
+readme = "README.md"
+authors = [
+    { name = "qing4132", email = "qing4132@126.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.26.7",
+]
+
+[project.scripts]
+rawkit = "rawkit.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+]
