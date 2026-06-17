@@ -86,6 +86,12 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     for tag, key in _FIELD_MAP:
         if tag in record and record[tag] not in (None, ""):
             out[key] = record[tag]
+    # exiftool prints dates as 'YYYY:MM:DD HH:MM:SS' (a legacy EXIF quirk).
+    # Normalize to 'YYYY-MM-DD HH:MM:SS' so string compare matches the
+    # --where date literal syntax (YYYY-MM-DD) and so JSON output is sane.
+    d = out.get("date")
+    if isinstance(d, str) and len(d) >= 10 and d[4] == ":" and d[7] == ":":
+        out["date"] = d[:4] + "-" + d[5:7] + "-" + d[8:]
     return out
 
 

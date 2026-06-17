@@ -9,6 +9,7 @@ from typing import Any, Iterable
 import typer
 
 from rawkit.exif import safe_batch_read
+from rawkit.query import QueryError, compile_where
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -281,6 +282,14 @@ def ls(
         help="Files or directories to scan. Defaults to current directory. "
              "Directories are walked recursively; files must have a RAW suffix.",
     ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter rows by an EXIF predicate. "
+             "Examples: 'iso>3200 and lens~\"50\"', 'date>=\"2024-01-01\"'.",
+    ),
     as_json: bool = typer.Option(
         False,
         "--json",
@@ -298,6 +307,17 @@ def ls(
         return
 
     records = safe_batch_read(raws)
+
+    if where:
+        try:
+            predicate = compile_where(where)
+        except QueryError as e:
+            typer.echo(f"rawkit: --where: {e}", err=True)
+            raise typer.Exit(code=2)  # 2 = usage error (matches grep/find)
+        records = [r for r in records if predicate(r)]
+        if not records:
+            return
+
     if as_json:
         _emit_jsonl(records)
     else:
