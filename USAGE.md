@@ -42,8 +42,10 @@ rawkit ls [PATHS...] [-w/--where EXPR] [-s/--sort COL] [-r/--reverse] [-R/--recu
 
 - `PATHS`:零个或多个**目录或 RAW 文件**。无参数 = 当前目录。默认只看顶层(同 `ls`),要递归加 `-R`。
 - `--where, -w EXPR`:按 EXIF 条件过滤,见下方 DSL 参考。
-- `--sort, -s COL`:按某一列排序。**默认 `datetime`**。可选:`file` / `datetime` / `date` / `time` / `model` / `lens` / `focal` / `aperture` / `shutter` / `bias` / `iso`。
-- `--reverse, -r`:反转顺序。缺失值永远排最后(与方向无关,SQL NULLS LAST)。
+- `--sort, -s KEY[,KEY2,...]`:按某一列或多列排序(逗号分隔为主、次、再次…)。**默认 `datetime`**。可选:`file` / `datetime` / `date` / `time` / `model` / `lens` / `focal` / `aperture` / `shutter` / `bias` / `iso`。
+  - 如 `--sort model,datetime`:先按机型分组,同机型内部按拍摄时间
+  - 同 key 什么排序都不指定时的 fallback 是路径字典序(相机原生名≈拍摄顺序)
+- `--reverse, -r`:反转顺序(**会反转所有 key**,不是只反主键)。缺失值永远排最后(与方向无关,SQL NULLS LAST)。
 - `--recursive, -R`:递归进子目录(默认 OFF)。
 - `--json`:JSONL 输出(每行一对象),给 `jq` 等管道。默认是人读对齐表。
 

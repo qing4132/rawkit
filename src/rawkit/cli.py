@@ -267,7 +267,7 @@ _SORT_HEADER_MAP: dict[str, str] = {
 
 def _render_table(
     records: Iterable[dict[str, Any]],
-    sort_key: SortKey,
+    sort_keys: list[SortKey],
     reverse: bool,
 ) -> None:
     """Render an aligned, content-width table on stdout.
@@ -304,9 +304,11 @@ def _render_table(
         rows.append(tuple(row))
         raw_cells.append(tuple(raw))
 
-    # Build headers — the active sort key's header gets an arrow suffix.
+    # Build headers — the PRIMARY sort key's header gets an arrow suffix
+    # (secondary keys are not visually marked, to avoid header clutter).
     arrow = "\u2193" if reverse else "\u2191"  # ↓ desc / ↑ asc
-    active_header_name = _SORT_HEADER_MAP[sort_key.value]
+    primary_key = sort_keys[0].value if sort_keys else "datetime"
+    active_header_name = _SORT_HEADER_MAP[primary_key]
     headers: list[str] = []
     for h, _k, _a in _TABLE_COLUMNS:
         headers.append(h + arrow if h == active_header_name else h)
@@ -403,11 +405,26 @@ _SORT_EXTRACTORS: dict[SortKey, Any] = {
 
 
 def _sort_records(
-    records: list[dict[str, Any]], key: SortKey, reverse: bool,
+    records: list[dict[str, Any]],
+    keys: list[SortKey],
+    reverse: bool,
 ) -> list[dict[str, Any]]:
-    """Sort by `key`. Missing values are pushed to the END regardless of
-    `reverse` (NULLS LAST semantics, as common in SQL engines)."""
-    extract = _SORT_EXTRACTORS[key]
+    """Sort by a sequence of keys (primary, secondary, ...).
+
+    NULLS LAST semantics per key, applied hierarchically:
+      - records with a missing primary key go after everything else
+      - within a same-primary group, records with a missing secondary key
+        sort after the rest of that group
+      - ...and so on for further keys
+
+    `reverse` flips the comparison direction; it applies to ALL keys
+    (per-key direction is a possible future extension).
+    """
+    if not keys or not records:
+        return list(records)
+
+    primary, *rest = keys
+    extract = _SORT_EXTRACTORS[primary]
     haves: list[tuple[Any, dict[str, Any]]] = []
     misses: list[dict[str, Any]] = []
     for r in records:
@@ -417,7 +434,49 @@ def _sort_records(
         else:
             haves.append((v, r))
     haves.sort(key=lambda pair: pair[0], reverse=reverse)
-    return [r for _, r in haves] + misses
+
+    if not rest:
+        sorted_have_records = [r for _, r in haves]
+    else:
+        # Tie-break on secondary keys within groups of equal primary.
+        from itertools import groupby
+        sorted_have_records = []
+        for _, grp in groupby(haves, key=lambda pair: pair[0]):
+            grp_records = [r for _, r in grp]
+            if len(grp_records) > 1:
+                sorted_have_records.extend(_sort_records(grp_records, rest, reverse))
+            else:
+                sorted_have_records.extend(grp_records)
+
+    return sorted_have_records + misses
+
+
+def _parse_sort_keys(spec: str) -> list[SortKey]:
+    """Parse a comma-separated --sort value into a list of SortKey enum members.
+
+    'datetime'        -> [datetime]
+    'model,datetime'  -> [model, datetime]
+
+    Raises typer.BadParameter on invalid / empty / duplicate keys so the user
+    gets the standard typer usage-error treatment.
+    """
+    raw = [s.strip().lower() for s in spec.split(",") if s.strip()]
+    if not raw:
+        raise typer.BadParameter("empty --sort spec")
+    valid = {k.value for k in SortKey}
+    keys: list[SortKey] = []
+    seen: set[str] = set()
+    for name in raw:
+        if name not in valid:
+            options = ", ".join(sorted(valid))
+            raise typer.BadParameter(
+                f"unknown sort key {name!r}. Valid keys: {options}"
+            )
+        if name in seen:
+            raise typer.BadParameter(f"duplicate sort key {name!r}")
+        seen.add(name)
+        keys.append(SortKey(name))
+    return keys
 
 
 # --- ls command -------------------------------------------------------------
@@ -438,12 +497,15 @@ def ls(
         help="Filter rows by an EXIF predicate. "
              "Examples: 'iso>3200 and lens~\"50\"', 'date>=\"2024-01-01\"'.",
     ),
-    sort: SortKey = typer.Option(
-        SortKey.datetime,
+    sort: str = typer.Option(
+        "datetime",
         "--sort",
         "-s",
-        case_sensitive=False,
-        help="Column to sort by. Missing values always sort to the end.",
+        metavar="KEY[,KEY2,...]",
+        help="Column(s) to sort by. Comma-separated for primary,secondary,... "
+             "Missing values always sort to the end (NULLS LAST). "
+             "Valid: file, datetime, date, time, model, lens, focal, aperture, "
+             "shutter, bias, iso.",
     ),
     reverse: bool = typer.Option(
         False,
@@ -473,6 +535,8 @@ def ls(
     if not raws:
         return
 
+    sort_keys = _parse_sort_keys(sort)
+
     records = safe_batch_read(raws)
 
     if where:
@@ -485,9 +549,9 @@ def ls(
         if not records:
             return
 
-    records = _sort_records(records, sort, reverse)
+    records = _sort_records(records, sort_keys, reverse)
 
     if as_json:
         _emit_jsonl(records)
     else:
-        _render_table(records, sort_key=sort, reverse=reverse)
+        _render_table(records, sort_keys=sort_keys, reverse=reverse)

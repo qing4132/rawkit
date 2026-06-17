@@ -456,10 +456,11 @@ def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
 # --- header sort indicator + cell color (via direct _render_table call) ----
 
 def _capture_render(records, sort_key, reverse, monkeypatch, capsys, force_color=True):
-    """Render via _render_table with color forced on/off, capture stdout."""
+    """Render via _render_table with color forced on/off, capture stdout.
+    Accepts a single sort_key for convenience; wraps it into the list form."""
     from rawkit import cli as cli_mod
     monkeypatch.setattr(cli_mod, "_color_enabled", lambda: force_color)
-    cli_mod._render_table(records, sort_key=sort_key, reverse=reverse)
+    cli_mod._render_table(records, sort_keys=[sort_key], reverse=reverse)
     return capsys.readouterr().out
 
 
@@ -567,3 +568,110 @@ def test_no_color_env_var_disables_color(monkeypatch) -> None:
     assert _color_enabled() is False
     monkeypatch.delenv("NO_COLOR", raising=False)
     assert _color_enabled() is True
+
+
+# --- multi-key sort (primary, secondary, ...) ------------------------------
+
+def test_ls_multi_key_sort_model_then_datetime(tmp_path, monkeypatch) -> None:
+    """`--sort model,datetime`: same-model files break ties by datetime."""
+    def fake(paths):
+        # Three Canon, three Sony, intentionally out of chronological order.
+        return [
+            {"path": str(paths[0]), "model": "Canon EOS R5", "datetime": "2024-03-15 12:00:00"},
+            {"path": str(paths[1]), "model": "Sony A1",      "datetime": "2022-01-01 09:00:00"},
+            {"path": str(paths[2]), "model": "Canon EOS R5", "datetime": "2023-06-10 18:00:00"},
+            {"path": str(paths[3]), "model": "Sony A1",      "datetime": "2024-10-27 17:00:00"},
+            {"path": str(paths[4]), "model": "Canon EOS R5", "datetime": "2022-05-01 14:00:00"},
+            {"path": str(paths[5]), "model": "Sony A1",      "datetime": "2023-07-04 11:00:00"},
+        ]
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
+    for n in ("a", "b", "c", "d", "e", "f"):
+        (tmp_path / f"{n}.ARW").write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(tmp_path), "--sort", "model,datetime", "--json"])
+    assert result.exit_code == 0
+    rows = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    names = [Path(r["path"]).name for r in rows]
+    # Canon group first (alphabetic), ascending datetime within;
+    # then Sony group, ascending datetime within.
+    assert names == ["e.ARW", "c.ARW", "a.ARW",     # Canon: 2022 → 2023 → 2024
+                     "b.ARW", "f.ARW", "d.ARW"]    # Sony:  2022 → 2023 → 2024
+
+
+def test_ls_multi_key_sort_reverse_flips_all_levels(tmp_path, monkeypatch) -> None:
+    """`-r` with multi-key reverses BOTH levels (global direction)."""
+    def fake(paths):
+        return [
+            {"path": str(paths[0]), "model": "A", "iso": 100},
+            {"path": str(paths[1]), "model": "B", "iso": 100},
+            {"path": str(paths[2]), "model": "A", "iso": 800},
+        ]
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
+    for n in ("a", "b", "c"):
+        (tmp_path / f"{n}.ARW").write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(tmp_path), "--sort", "model,iso", "-r", "--json"])
+    assert result.exit_code == 0
+    names = [Path(json.loads(ln)["path"]).name
+             for ln in result.stdout.splitlines() if ln.strip()]
+    # Model desc: B group first, then A group; iso desc within each.
+    assert names == ["b.ARW",            # B, iso 100
+                     "c.ARW", "a.ARW"]   # A, iso 800 then 100
+
+
+def test_ls_multi_key_missing_secondary_goes_after_in_group(tmp_path, monkeypatch) -> None:
+    """Within same primary key, records missing the secondary key still
+    follow the per-key NULLS LAST rule."""
+    def fake(paths):
+        return [
+            {"path": str(paths[0]), "model": "X", "iso": 800},
+            {"path": str(paths[1]), "model": "X"},               # iso missing
+            {"path": str(paths[2]), "model": "X", "iso": 200},
+        ]
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
+    for n in ("a", "b", "c"):
+        (tmp_path / f"{n}.ARW").write_bytes(b"")
+
+    result = runner.invoke(app, ["ls", str(tmp_path), "--sort", "model,iso", "--json"])
+    assert result.exit_code == 0
+    names = [Path(json.loads(ln)["path"]).name
+             for ln in result.stdout.splitlines() if ln.strip()]
+    # Ascending iso within model X: 200, 800, then the missing-iso row last.
+    assert names == ["c.ARW", "a.ARW", "b.ARW"]
+
+
+def test_ls_sort_invalid_key_in_list_errors(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    result = runner.invoke(app, ["ls", str(tmp_path), "--sort", "model,nonsense"])
+    assert result.exit_code != 0
+    msg = (result.stderr or result.output).lower()
+    assert "nonsense" in msg or "unknown" in msg
+
+
+def test_ls_sort_duplicate_key_in_list_errors(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    result = runner.invoke(app, ["ls", str(tmp_path), "--sort", "model,model"])
+    assert result.exit_code != 0
+    assert "duplicate" in (result.stderr or result.output).lower()
+
+
+def test_ls_sort_single_key_still_works(tmp_path, fake_exif) -> None:
+    """Backward-compatibility: single key still accepted."""
+    (tmp_path / "a.ARW").write_bytes(b"")
+    result = runner.invoke(app, ["ls", str(tmp_path), "--sort", "iso", "--json"])
+    assert result.exit_code == 0
+
+
+def test_header_arrow_marks_primary_key_only(monkeypatch, capsys) -> None:
+    """With `--sort model,iso`, the arrow goes on the model column, not iso."""
+    from rawkit.cli import SortKey, _render_table
+    monkeypatch.setattr("rawkit.cli._color_enabled", lambda: False)
+    _render_table(
+        [{"path": "/x/a.ARW", "model": "X", "iso": 100}],
+        sort_keys=[SortKey.model, SortKey.iso],
+        reverse=False,
+    )
+    out = capsys.readouterr().out
+    header = out.splitlines()[0]
+    assert "model\u2191" in header
+    assert "iso\u2191" not in header
