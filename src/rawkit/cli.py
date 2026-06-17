@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import typer
-from rich.console import Console
-from rich.table import Table
 
 from rawkit.exif import safe_batch_read
 
@@ -147,32 +145,80 @@ def _fmt_focal(v: Any) -> str:
         return str(v)
 
 
+_TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # (header, normalized key, alignment)  alignment: 'l' = left, 'r' = right
+    ("file",     "_filename", "l"),
+    ("date",     "date",      "l"),
+    ("model",    "model",     "l"),
+    ("lens",     "lens",      "l"),
+    ("iso",      "iso",       "r"),
+    ("aperture", "fnumber",   "r"),
+    ("shutter",  "shutter",   "r"),
+    ("focal",    "focal",     "r"),
+)
+
+_FORMATTERS = {
+    "date":    _fmt_date,
+    "iso":     _fmt_iso,
+    "fnumber": _fmt_fnumber,
+    "shutter": _fmt_shutter,
+    "focal":   _fmt_focal,
+}
+
+_BOLD = "\x1b[1m"
+_DIM_CYAN = "\x1b[36m"
+_RESET = "\x1b[0m"
+
+
 def _render_table(records: Iterable[dict[str, Any]]) -> None:
-    # no_wrap on every column = one row per file, even in narrow terminals.
-    # Long values get an ellipsis instead of vertically exploding the row.
-    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-    table.add_column("file", style="cyan", no_wrap=True, overflow="ellipsis")
-    table.add_column("date", no_wrap=True, overflow="ellipsis")
-    table.add_column("model", no_wrap=True, overflow="ellipsis")
-    table.add_column("lens", no_wrap=True, overflow="ellipsis")
-    table.add_column("iso", justify="right", no_wrap=True)
-    table.add_column("aperture", justify="right", no_wrap=True)
-    table.add_column("shutter", justify="right", no_wrap=True)
-    table.add_column("focal", justify="right", no_wrap=True)
+    """Render an aligned, content-width table on stdout.
 
+    We intentionally do NOT fit-to-terminal: columns are sized to the widest
+    value so no data is ever truncated. Output may exceed the terminal width;
+    in that case `| less -S` (horizontal scroll) is the standard escape hatch.
+    Color/bold are emitted only when stdout is a TTY.
+    """
+    records = list(records)
+    if not records:
+        return
+
+    rows: list[tuple[str, ...]] = []
     for r in records:
-        table.add_row(
-            Path(r.get("path", "")).name,
-            _fmt_date(r.get("date")),
-            str(r.get("model") or "-"),
-            str(r.get("lens") or "-"),
-            _fmt_iso(r.get("iso")),
-            _fmt_fnumber(r.get("fnumber")),
-            _fmt_shutter(r.get("shutter")),
-            _fmt_focal(r.get("focal")),
-        )
+        row: list[str] = []
+        for _header, key, _align in _TABLE_COLUMNS:
+            if key == "_filename":
+                row.append(Path(r.get("path", "")).name)
+            elif key in _FORMATTERS:
+                row.append(_FORMATTERS[key](r.get(key)))
+            else:
+                row.append(str(r.get(key) or "-"))
+        rows.append(tuple(row))
 
-    Console(file=sys.stdout).print(table)
+    headers = tuple(h for h, _k, _a in _TABLE_COLUMNS)
+    widths = [max(len(s) for s in col) for col in zip(headers, *rows)]
+
+    is_tty = sys.stdout.isatty()
+
+    def fmt_cell(text: str, width: int, align: str) -> str:
+        return f"{text:>{width}}" if align == "r" else f"{text:<{width}}"
+
+    # Header
+    header_cells = [
+        fmt_cell(h, widths[i], _TABLE_COLUMNS[i][2]) for i, h in enumerate(headers)
+    ]
+    header_line = "  ".join(header_cells)
+    if is_tty:
+        header_line = f"{_BOLD}{header_line}{_RESET}"
+    typer.echo(header_line)
+
+    for row in rows:
+        cells = [
+            fmt_cell(row[i], widths[i], _TABLE_COLUMNS[i][2])
+            for i in range(len(row))
+        ]
+        if is_tty:
+            cells[0] = f"{_DIM_CYAN}{cells[0]}{_RESET}"
+        typer.echo("  ".join(cells))
 
 
 def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
