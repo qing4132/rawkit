@@ -18,6 +18,12 @@ rawkit --help
 rawkit ls --help
 ```
 
+> ⚠️ **加新依赖后要重装一次**。`--editable` 只让源代码改动实时生效,**依赖是装的那一刻锁的**。每次仓库里多了一个 `uv add` 的包(如 lark、rich),需要:
+> ```bash
+> cd ~/Documents/code/rawkit && uv tool install --reinstall --editable .
+> ```
+> 否则下次 `rawkit ls` 会 `ModuleNotFoundError`。
+
 依赖:**需要系统装 `exiftool`**。
 - macOS:`brew install exiftool`
 - Debian/Ubuntu:`apt install libimage-exiftool-perl`
