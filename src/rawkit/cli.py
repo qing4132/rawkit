@@ -230,7 +230,6 @@ _FORMATTERS = {
 }
 
 _BOLD = "\x1b[1m"
-_CYAN = "\x1b[36m"
 _RESET = "\x1b[0m"
 
 
@@ -274,11 +273,11 @@ def _render_table(
     value so no data is ever truncated. Output may exceed the terminal width;
     in that case `| less -S` (horizontal scroll) is the standard escape hatch.
 
-    When stdout is a TTY (and NO_COLOR isn't set) we highlight the active
-    sort column's header with bold+cyan and an ASC/DESC arrow. We do NOT
-    color data cells — cell coloring would impose a value judgment on
-    which numbers count as 'unusual' (high ISO bad? non-zero bias notable?
-    depends on the photographer's workflow).
+    When stdout is a TTY (and NO_COLOR isn't set) the header row is bold,
+    and the active sort column gets an ASC/DESC arrow suffix. We do NOT
+    color any cells — not even the sort header — because color is too
+    easily read as a value judgment, and the arrow already carries the
+    'which column is sorted' information without ambiguity.
     """
     records = list(records)
     if not records:
@@ -323,12 +322,11 @@ def _render_table(
         # terminals render them as zero-width. So padding-then-wrap is safe.
         return f"{codes}{s}{_RESET}" if use_color and codes else s
 
-    # Header line: bold+cyan on the active sort column, plain on others.
+    # Header line: whole row bold; active sort column carries the arrow only.
     header_cells: list[str] = []
     for i, h in enumerate(headers):
         padded = fmt_cell(h, widths[i], _TABLE_COLUMNS[i][2])
-        codes = _BOLD + _CYAN if h == active_header_name + arrow else _BOLD
-        header_cells.append(wrap(padded, codes))
+        header_cells.append(wrap(padded, _BOLD))
     typer.echo("  ".join(header_cells), color=use_color)
 
     # Data rows: plain text, no cell-level coloring.
