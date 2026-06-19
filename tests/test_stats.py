@@ -350,10 +350,12 @@ def test_summary_includes_year_month_day_counts() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    # 2024-01-15 → 2025-08-01 = 1 full year, 18 full months, 564 days
+    # 2024-01-15 → 2025-08-01 = 1 year, 6 months, 17 days
+    # (calendar breakdown that reconstructs the span, not three
+    # independent unit measurements)
     assert "1 year," in out
-    assert "18 months," in out
-    assert "564 days" in out
+    assert "6 months," in out
+    assert "17 days" in out
 
 
 def test_summary_iso_range_is_real_min_max() -> None:
@@ -415,7 +417,7 @@ def test_summary_orientation_lists_both_when_only_two() -> None:
     records[1]["orientation"] = "portrait"
     s = build_stats(records, [])
     out = render_default(s)
-    assert "landscape (1), portrait (1)" in out
+    assert "1 (landscape), 1 (portrait)" in out
     assert "+0 others" not in out
 
 

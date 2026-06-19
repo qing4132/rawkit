@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from calendar import monthrange
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -173,21 +174,26 @@ def build_stats(
         except ValueError:
             pass
 
-    # Span of the date range expressed in three independent units: full
-    # years, full months, full days (each is the *same* span re-measured,
-    # so 3 years / 39 months / 1204 days are all valid views of one span).
+    # Calendar breakdown of the date range (years + months + days that
+    # together reconstruct the span). 2022-04-23 → 2025-08-09 = 3y 3m 17d.
     span_years = span_months = span_days = 0
     if dates:
         try:
             d0 = datetime.strptime(dates[0], "%Y-%m-%d").date()
             d1 = datetime.strptime(dates[-1], "%Y-%m-%d").date()
-            span_days = (d1 - d0).days
-            span_years = d1.year - d0.year
-            if (d1.month, d1.day) < (d0.month, d0.day):
-                span_years -= 1
-            span_months = (d1.year - d0.year) * 12 + (d1.month - d0.month)
-            if d1.day < d0.day:
-                span_months -= 1
+            y = d1.year - d0.year
+            m = d1.month - d0.month
+            d = d1.day - d0.day
+            if d < 0:
+                # borrow from the month preceding d1
+                pm = d1.month - 1 if d1.month > 1 else 12
+                py = d1.year if d1.month > 1 else d1.year - 1
+                d += monthrange(py, pm)[1]
+                m -= 1
+            if m < 0:
+                m += 12
+                y -= 1
+            span_years, span_months, span_days = y, m, d
         except ValueError:
             pass
 
@@ -414,13 +420,13 @@ def _fmt_hour(h: int | None) -> str:
 
 
 def _enum_inline(items: list[dict[str, Any]], n_distinct: int) -> str:
-    """Top 3 by count, plus '+N others' when there are more.
-    `n_distinct` is the dimension's total distinct count (drives the
-    'X distinct: ' prefix when there are > 3)."""
+    """`{count} ({key})` for each top-3 item, plus '+N others' when there
+    are more. e.g. '22 (landscape), 3 (portrait)'. `n_distinct` is the
+    dimension's total distinct count (drives the +others tail)."""
     if not items:
-        return "—"
+        return "\u2014"
     top_n = 3
-    parts = [f"{it['key']} ({it['count']})" for it in items[:top_n]]
+    parts = [f"{it['count']} ({it['key']})" for it in items[:top_n]]
     extra = n_distinct - min(top_n, len(items))
     if extra > 0:
         parts.append(f"+{extra} others")
@@ -472,6 +478,7 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     rows.append(("Photos",       f"{total['count']}"))
     rows.append(("Total size",   total.get("bytes_human", "-")))
     rows.append(("Date range",   date_str))
+    rows.append(("Hour",         hour_line))
     rows.append(("Cameras",      f"{total.get('n_models', 0)}"))
     rows.append(("Lenses",       f"{total.get('n_lenses', 0)}"))
     rows.append(("Orientation",  orient_line))
@@ -479,7 +486,6 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     rows.append(("Aperture",     aperture_line))
     rows.append(("Shutter",      shutter_line))
     rows.append(("Focal length", focal_line))
-    rows.append(("Hour",         hour_line))
 
     key_w = max(len(k) for k, _ in rows)
     return "\n".join(f"{k:<{key_w}}  {v}" for k, v in rows)
