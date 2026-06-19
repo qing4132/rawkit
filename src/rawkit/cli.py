@@ -13,6 +13,7 @@ from rawkit.exif import safe_batch_read
 from rawkit.preview import PreviewExtractError, extract_preview
 from rawkit.query import QueryError, compile_where
 from rawkit.render import RenderError, render, suffix_for
+from rawkit.stats import build_stats, render_by, render_default, supported_dimensions
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -855,3 +856,111 @@ def cmd_render(
         )
     if n_failed:
         raise typer.Exit(code=1)
+
+
+# --- stats command ----------------------------------------------------------
+
+@app.command()
+def stats(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Files or directories to aggregate over. Defaults to current "
+             "directory. Directories are listed top-level only unless -R.",
+    ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter records by an EXIF predicate (same DSL as `ls --where`). "
+             "Examples: 'iso>3200', 'date>=\"2024-01-01\" and model~\"R5\"'.",
+    ),
+    by: str = typer.Option(
+        "",
+        "--by",
+        metavar="DIM",
+        help="Show one dimension in depth (no top-N truncation), replacing the "
+             "default 4-section view. Valid: model / lens / iso / aperture / "
+             "focal / hour / month.",
+    ),
+    top: int = typer.Option(
+        5,
+        "--top",
+        metavar="N",
+        help="Number of rows for the 'by lens' table in default view (only). "
+             "Use --more for full list. Ignored with --by.",
+    ),
+    more: bool = typer.Option(
+        False,
+        "--more",
+        help="Show ALL rows in default view's lens table (overrides --top).",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit full structured aggregation as JSON (always full, regardless "
+             "of --by / --top / --more). Suitable for jq / scripts.",
+    ),
+) -> None:
+    """Aggregate EXIF + filesize across a set of RAW files.
+
+    Default output: a 4-section table covering total + by-model + by-ISO +
+    by-lens (top N). For a single-dimension deep view, use --by:
+
+    \b
+      rawkit stats samples/                       # default 4-section view
+      rawkit stats ~/2026 -R --by month           # monthly density
+      rawkit stats samples/ --by hour             # golden-hour analysis
+      rawkit stats shoot/ --where 'iso>=3200'     # subset stats
+
+    Output is on stdout (data); errors and 'no records' notices on stderr.
+    """
+    inputs = paths if paths else [Path(".")]
+    raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        typer.echo("no RAW files found", err=True)
+        raise typer.Exit(code=1)
+
+    raws_after_where = _filter_paths_by_where(raws, where)
+    if not raws_after_where:
+        typer.echo("no records matched --where", err=True)
+        raise typer.Exit(code=1)
+
+    # stats always needs EXIF, even without --where. Pair records back with
+    # Path objects so build_stats can call st_size for the total-bytes line.
+    records = safe_batch_read(raws_after_where)
+    by_path = {r.get("path"): r for r in records}
+    paired_records: list[dict[str, Any]] = []
+    paired_paths: list[Path] = []
+    for p in raws_after_where:
+        rec = by_path.get(str(p))
+        if rec is not None:
+            paired_records.append(rec)
+            paired_paths.append(p)
+
+    stats_data = build_stats(paired_records, paired_paths)
+
+    if as_json:
+        typer.echo(json.dumps(stats_data, ensure_ascii=False))
+        return
+
+    if by:
+        dim = by.lower().strip()
+        if dim not in supported_dimensions():
+            typer.echo(
+                f"rawkit: --by: unknown dimension {by!r}; valid: "
+                f"{', '.join(supported_dimensions())}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        typer.echo(render_by(stats_data, dim, where=where))
+        return
+
+    lens_top = 999_999 if more else top
+    typer.echo(render_default(stats_data, lens_top=lens_top, where=where))

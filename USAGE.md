@@ -3,7 +3,7 @@
 > 这是**用法**文档,不是设计文档。每加一个功能就往这里追加示例。
 > 设计/原则/路线图见 [README.md](README.md)。
 >
-> 当前可用命令:`rawkit ls`、`rawkit preview`、`rawkit render`。
+> 当前可用命令:`rawkit ls`、`rawkit preview`、`rawkit render`、`rawkit stats`。
 
 ---
 
@@ -498,6 +498,118 @@ broken.ARW: failed — libraw failed: <原始 libraw 报错>
 - **JPEG 加 optimize=True**:实测真实照片上稳定;Pillow optimize 在极端高熵数据(纯随机噪声)上可能挂,但生活里不会撞上
 - **8-bit 输出 only**:libraw 默认 8-bit。需要 16-bit 的话以后加 `--depth 16`(对 TIFF 才有意义)
 - **必须装 rawpy + Pillow**:都是 `uv tool install` 自动拉
+
+---
+
+## `rawkit stats`
+
+对一组 RAW 做 EXIF + 文件大小聚合。年度回顾、按机型/镜头/ISO/光圈/焦段/时段分布——LrC 给不了的命令行视图。
+
+### 签名
+
+```
+rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
+                        [--by DIM] [--top N | --more] [--json]
+```
+
+- `PATHS`:同 ls/preview/render
+- `--where, -w EXPR`:复用 lark DSL(`ls --where` 同款)
+- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `iso` / `aperture` / `focal` / `hour` / `month`
+- `--top N`:默认视图中"按镜头" top N(默认 5),`--by` 模式忽略
+- `--more`:默认视图中显示全部镜头(覆盖 `--top`)
+- `--recursive, -R`:递归
+- `--json`:输出完整结构化聚合(不受 `--by`/`--top` 影响),供脚本
+
+### 默认输出(4 段)
+
+```bash
+rawkit stats samples/
+```
+
+```
+总览
+────────────────────────────────────────────────────────
+张数        25
+文件总大小  1.37 GiB
+时间跨度    2022-04-23 → 2025-08-09  (1205 天)
+机型种类    11
+镜头种类    22  (含 3 张定焦机)
+
+按机型
+────────────────────────────────────────────────────────
+EOS R5         11  █████████████                    44%
+ILCE-7RM4A      5  ██████                           20%
+...
+
+按 ISO(对数分桶)
+────────────────────────────────────────────────────────
+≤100       8  ██████████                       32%
+101–200    3  ████                             12%
+201–400    7  ████████                         28%
+401–800    3  ████                             12%
+801–1600   2  ██                                8%
+1601–3200  1  █                                 4%
+3201–6400  1  █                                 4%
+
+按镜头(top 5)
+────────────────────────────────────────────────────────
+RF24-105mm F4 L IS USM  2  ██                               8%
+...
+... 还有 17 种镜头未显示 (--more / --top N / --by lens 看全)
+```
+
+视觉规则:表头加粗(TTY 时)、横线分隔、bar 用 `█`、不染色、不用 emoji、百分号纵向对齐。
+
+### `--by FIELD` 单维度详细
+
+```bash
+rawkit stats samples/ --by month     # 按月份(年度回顾)
+rawkit stats samples/ --by hour      # 按 EXIF 拍摄时段(3 小时桶)
+rawkit stats samples/ --by aperture  # 按光圈(标准档自动对齐 f/2.7 → f/2.8)
+rawkit stats samples/ --by focal     # 按焦段类别(超广/广/标/中长/长/超长)
+rawkit stats samples/ --by lens      # 完整镜头分布,不 top 截断
+```
+
+### 跟 `--where` 组合(子集统计)
+
+```bash
+# 高 ISO 都在哪个时段拍的?
+rawkit stats samples/ --where 'iso>=3200' --by hour
+
+# Sony 机器的统计(默认 4 段会带 "筛选" 一行)
+rawkit stats samples/ --where 'maker~"Sony"'
+
+# 今年某焦段的拍摄量按月分布
+rawkit stats ~/Pictures -R --where 'date>="2026-01-01" and focal>=70 and focal<=200' --by month
+```
+
+`--by` 视图的标题会带 caption:`按 ISO  ·  筛: iso>=400  ·  13 张`,让你一眼看出当前是子集统计。
+
+### JSON 输出(供脚本)
+
+```bash
+rawkit stats samples/ --json
+```
+
+返回结构化 dict 含 `total` / `by_model` / `by_iso_bucket` / `by_lens` / `by_aperture_bucket` / `by_focal_bucket` / `by_hour_bucket` / `by_month_bucket`。每个 `by_*` 是 `[{key, count, share}, ...]`。
+
+### 退出码
+
+- `0` 成功
+- `1` 路径下找不到 RAW / `--where` 命中 0 张
+- `2` `--by` 给了不认识的维度,或 `--where` DSL 语法错
+
+### 设计说明
+
+- **桶定义是摄影玩家友好的**(非自动 binning):
+  - ISO:每 stop 一档,8 桶(≤100 / 101–200 / ... / >6400)
+  - 光圈:13 个标准档,实测光圈在 ±6% 内对齐到最近一档(f/2.7 → f/2.8)
+  - 焦段:6 类(<20mm 超广 / 20–35 广 / 35–70 标 / 70–200 中长 / 200–600 长 / >600 超长)
+  - 时段:8 个 3 小时桶(00–02 / 03–05 / ... / 21–23)
+- **TTY 检测**:非 TTY(管道、重定向)自动关颜色(同 ls)
+- **跟 ls 风格一致**:表头加粗、不染色、不用 emoji
+- **空桶不显示**:不会输出 "0 张" 的空行,默认视图保持紧凑
+- **排序**:大多数维度按 count 降序 + key 字母升序;`month` 按年月时序(因为月份是有序量纲)
 
 ---
 
