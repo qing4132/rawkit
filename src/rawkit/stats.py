@@ -173,6 +173,28 @@ def build_stats(
         except ValueError:
             pass
 
+    # Distinct year / month / day counts (values where photos exist).
+    n_years  = len({d[:4]  for d in dates}) if dates else 0
+    n_months = len({d[:7]  for d in dates}) if dates else 0
+    n_days   = len({d[:10] for d in dates}) if dates else 0
+
+    # Numeric extents (real values, not bucket names).
+    def _extent(field: str) -> tuple[Any, Any]:
+        vals = [r[field] for r in records if r.get(field) is not None]
+        if not vals:
+            return (None, None)
+        return (min(vals), max(vals))
+
+    iso_min, iso_max         = _extent("iso")
+    fnumber_min, fnumber_max = _extent("fnumber")
+    focal_min, focal_max     = _extent("focal")
+    shutter_min, shutter_max = _extent("shutter")
+
+    # Hour extent extracted from the `time` field (HH:MM[:SS]).
+    hours = [int(r["time"][:2]) for r in records if isinstance(r.get("time"), str) and len(r["time"]) >= 2]
+    hour_min = min(hours) if hours else None
+    hour_max = max(hours) if hours else None
+
     models = [r["model"] for r in records if r.get("model")]
     lenses = [r["lens"] for r in records if r.get("lens")]
     lensless_count = sum(1 for r in records if not r.get("lens"))
@@ -210,9 +232,18 @@ def build_stats(
             "bytes_human": _bytes_human(total_bytes),
             "date_range": date_range,
             "days_spanned": days_spanned,
+            "n_years": n_years,
+            "n_months": n_months,
+            "n_days": n_days,
             "n_models": len(set(models)),
             "n_lenses": len(set(lenses)),
+            "n_makers": len({r["maker"] for r in records if r.get("maker")}),
             "n_lensless_files": lensless_count,
+            "iso_min": iso_min, "iso_max": iso_max,
+            "fnumber_min": fnumber_min, "fnumber_max": fnumber_max,
+            "focal_min": focal_min, "focal_max": focal_max,
+            "shutter_min": shutter_min, "shutter_max": shutter_max,
+            "hour_min": hour_min, "hour_max": hour_max,
         },
         "by_model": _ranked(models),
         "by_maker": _ranked([r["maker"] for r in records if r.get("maker")]),
@@ -331,80 +362,133 @@ def _build_compact_rows(items: list[dict[str, Any]], top: int | None = None) -> 
     return rows
 
 
-def _render_summary(stats: dict[str, Any], where: str) -> str:
-    total = stats.get("total", {})
-    dr = total.get("date_range", [None, None])
-    days = total.get("days_spanned", 0)
-    date_str = f"{dr[0]} → {dr[1]}  ({days} days)" if dr[0] else "-"
-    lensless = total.get("n_lensless_files", 0)
-    lens_extra = f"  ({lensless} fixed-lens)" if lensless else ""
-
-    summary_rows = [
-        ("Photos",       f"{total['count']}"),
-        ("Total size",   total.get("bytes_human", "-")),
-        ("Date range",   date_str),
-        ("Cameras",      f"{total.get('n_models', 0)}"),
-        ("Lenses",       f"{total.get('n_lenses', 0)}{lens_extra}"),
-    ]
-    if where:
-        summary_rows.insert(0, ("Filter",     where))
-    key_w = max(len(k) for k, _ in summary_rows)
-    lines = ["Summary", _HRULE]
-    for k, v in summary_rows:
-        lines.append(f"{k:<{key_w}}  {v}")
-    return "\n".join(lines)
+def _fmt_shutter(s: float | None) -> str:
+    """Format a shutter speed (in seconds) the way photographers read it.
+    0.004 → '1/250'; 2.0 → '2s'; 0.999 → '1s' (never '1/1')."""
+    if s is None:
+        return "—"
+    s = float(s)
+    if s >= 1:
+        return f"{s:g}s"
+    denom = round(1 / s)
+    if denom <= 1:
+        return f"{s:g}s"
+    return f"1/{denom}"
 
 
-def _inline_summary(dim_name: str, items: list[dict[str, Any]]) -> str:
-    """One-line description of a dimension's distribution. Two styles:
+def _fmt_aperture(f: float | None) -> str:
+    if f is None:
+        return "—"
+    return f"f/{float(f):g}"
 
-    * RANGE: ordered-bucket dimensions (iso / aperture / focal / hour /
-      year / month / day). Show 'first – last  (N values present)'.
-    * ENUM: unordered count-ranked dimensions (camera / lens / maker /
-      orientation). Show 'top1 (n), top2 (n), top3 (n), +M others'.
 
-    Skipped entirely (returns '—') for empty items so the caller can
-    omit the line if desired.
-    """
+def _fmt_focal(mm: float | None) -> str:
+    if mm is None:
+        return "—"
+    return f"{float(mm):g}mm"
+
+
+def _fmt_iso(i: int | float | None) -> str:
+    if i is None:
+        return "—"
+    return f"{int(i)}"
+
+
+def _fmt_hour(h: int | None) -> str:
+    if h is None:
+        return "—"
+    return f"{int(h):02d}"
+
+
+def _enum_inline(items: list[dict[str, Any]], n_distinct: int) -> str:
+    """Top 3 by count, plus '+N others' when there are more.
+    `n_distinct` is the dimension's total distinct count (drives the
+    'X distinct: ' prefix when there are > 3)."""
     if not items:
         return "—"
-
-    _RANGE_DIMS = {"iso", "aperture", "fnumber", "focal", "hour",
-                   "year", "month", "day"}
-    if dim_name in _RANGE_DIMS:
-        first = items[0]["key"]
-        last = items[-1]["key"]
-        if first == last:
-            return f"{first}  (1 value)"
-        return f"{first} – {last}  ({len(items)} values)"
-
-    # ENUM: top 3 (count desc) + remainder
     top_n = 3
     parts = [f"{it['key']} ({it['count']})" for it in items[:top_n]]
-    extra = len(items) - top_n
+    extra = n_distinct - min(top_n, len(items))
     if extra > 0:
         parts.append(f"+{extra} others")
     return ", ".join(parts)
 
 
-def _render_overview(stats: dict[str, Any]) -> str:
-    """One-line-per-dimension table. Default view when no --by is given —
-    a glance at every angle without dominating the screen."""
-    rows: list[tuple[str, str]] = []
-    for dim in _DEFAULT_OVERVIEW_DIMS:
-        if dim not in _DIMENSIONS:
-            continue
-        _title, key = _DIMENSIONS[dim]
-        items = stats.get(key, [])
-        if not items:
-            continue
-        rows.append((dim, _inline_summary(dim, items)))
+def _render_summary(stats: dict[str, Any], where: str) -> str:
+    """Single Summary block — totals, date range with year/month/day
+    distinct counts, top-3 enum dims, and min–max ranges for numeric dims.
+    No subsections, no histograms; the whole overview is here."""
+    total = stats.get("total", {})
+    if total.get("count", 0) == 0:
+        return "no records"
 
-    if not rows:
-        return ""
+    dr = total.get("date_range", [None, None])
+    n_years  = total.get("n_years",  0)
+    n_months = total.get("n_months", 0)
+    n_days   = total.get("n_days",   0)
+    if dr[0]:
+        date_str = (
+            f"{dr[0]} → {dr[1]}  "
+            f"({n_years} year{'s' if n_years != 1 else ''}, "
+            f"{n_months} month{'s' if n_months != 1 else ''}, "
+            f"{n_days} day{'s' if n_days != 1 else ''})"
+        )
+    else:
+        date_str = "—"
+
+    lensless = total.get("n_lensless_files", 0)
+    lens_extra = f"  ({lensless} fixed-lens)" if lensless else ""
+
+    # Per-dimension inline summaries
+    by_model       = stats.get("by_model", [])
+    by_lens        = stats.get("by_lens", [])
+    by_maker       = stats.get("by_maker", [])
+    by_orientation = stats.get("by_orientation", [])
+
+    cam_line = f"{total.get('n_models', 0)}: {_enum_inline(by_model, total.get('n_models', 0))}" \
+               if by_model else f"{total.get('n_models', 0)}"
+    lens_line = (
+        f"{total.get('n_lenses', 0)}{lens_extra}: "
+        f"{_enum_inline(by_lens, total.get('n_lenses', 0))}"
+        if by_lens else f"{total.get('n_lenses', 0)}{lens_extra}"
+    )
+    maker_line = (
+        f"{total.get('n_makers', 0)}: {_enum_inline(by_maker, total.get('n_makers', 0))}"
+        if by_maker else f"{total.get('n_makers', 0)}"
+    )
+    orient_line = _enum_inline(by_orientation, len(by_orientation)) if by_orientation else "—"
+
+    def _range(lo, hi, fmt) -> str:
+        if lo is None:
+            return "—"
+        if lo == hi:
+            return fmt(lo)
+        return f"{fmt(lo)} – {fmt(hi)}"
+
+    iso_line     = _range(total.get("iso_min"),     total.get("iso_max"),     _fmt_iso)
+    aperture_line= _range(total.get("fnumber_min"), total.get("fnumber_max"), _fmt_aperture)
+    shutter_line = _range(total.get("shutter_min"), total.get("shutter_max"), _fmt_shutter)
+    focal_line   = _range(total.get("focal_min"),   total.get("focal_max"),   _fmt_focal)
+    hour_line    = _range(total.get("hour_min"),    total.get("hour_max"),    _fmt_hour)
+
+    rows: list[tuple[str, str]] = []
+    if where:
+        rows.append(("Filter",      where))
+    rows.append(("Photos",       f"{total['count']}"))
+    rows.append(("Total size",   total.get("bytes_human", "-")))
+    rows.append(("Date range",   date_str))
+    rows.append(("Cameras",      cam_line))
+    rows.append(("Lenses",       lens_line))
+    rows.append(("Makers",       maker_line))
+    rows.append(("Orientation",  orient_line))
+    rows.append(("ISO",          iso_line))
+    rows.append(("Aperture",     aperture_line))
+    rows.append(("Shutter",      shutter_line))
+    rows.append(("Focal",        focal_line))
+    rows.append(("Hour",         hour_line))
 
     key_w = max(len(k) for k, _ in rows)
-    lines = ["Distribution", _HRULE]
+    lines = ["Summary", _HRULE]
     for k, v in rows:
         lines.append(f"{k:<{key_w}}  {v}")
     return "\n".join(lines)
@@ -451,15 +535,6 @@ def _render_one_dim(
     return _section(title, rows)
 
 
-# The canonical dimensions shown in the default overview (no --by). Order
-# matters: this is the read order.
-_DEFAULT_OVERVIEW_DIMS: tuple[str, ...] = (
-    "camera", "lens", "maker", "orientation",
-    "iso", "aperture", "focal",
-    "hour", "year", "month", "day",
-)
-
-
 def render(
     stats: dict[str, Any],
     *,
@@ -467,29 +542,24 @@ def render(
     lens_top: int = 5,
     where: str = "",
 ) -> str:
-    """Render Summary + dimensions.
+    """Render Summary + (optional) per-dimension bar charts.
 
-    When `dims` is None (default), produce a one-line-per-dimension
-    distribution table — Summary + 'Distribution' section. A glance at
-    every angle without bars.
+    When `dims` is None (default), output is just the Summary block —
+    one line per dimension, totals + ranges + top-3 enums.
 
     When `dims` is given, produce DETAILED bar-chart sections for the
     chosen dimensions only. Multi-dim lists stack as separate sections.
 
-      render(stats)                            # default: Summary + Distribution
-      render(stats, dims=["month"])            # detailed bar chart
-      render(stats, dims=["camera", "lens"])   # two detailed sections
+      render(stats)                            # default: Summary only
+      render(stats, dims=["month"])            # Summary + detailed by month
+      render(stats, dims=["camera", "lens"])   # Summary + two detailed sections
     """
     total = stats.get("total", {})
     if total.get("count", 0) == 0:
         return "no records"
 
     sections = [_render_summary(stats, where)]
-    if dims is None:
-        overview = _render_overview(stats)
-        if overview:
-            sections.append(overview)
-    else:
+    if dims is not None:
         for dim in dims:
             sec = _render_one_dim(stats, dim, top=lens_top, compact=False)
             if sec:

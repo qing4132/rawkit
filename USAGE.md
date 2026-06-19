@@ -520,9 +520,9 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 - `--recursive, -R`:递归
 - `--json`:输出完整结构化聚合(不受 `--by`/`--top` 影响),供脚本
 
-### 默认输出(Summary + Distribution 一行摘要)
+### 默认输出(单块 Summary)
 
-不加 `--by` 时,默认输出 Summary + 一张 **`Distribution` 表**,每个维度**一行摘要**(无 bar、无 %):
+不加 `--by` 时,默认输出**一块 Summary**,所有维度内嵌一行(无 bar、无 %):
 
 ```bash
 rawkit stats samples/
@@ -531,30 +531,24 @@ rawkit stats samples/
 ```
 Summary
 ────────────────────────────────────────────────────────
-Photos      25
-Total size  1.37 GiB
-Date range  2022-04-23 → 2025-08-09  (1205 days)
-Cameras     11
-Lenses      22  (3 fixed-lens)
-
-Distribution
-────────────────────────────────────────────────────────
-camera       EOS R5 (11), ILCE-7RM4A (5), GFX100RF (1), +8 others
-lens         Apo-Summicron-M 1:2/50 ASPH. (1), E 70-350mm F4.5-6.3 G OSS (1), FE 20-70mm F4 G (1), +19 others
-maker        Canon (11), SONY (7), FUJIFILM (2), +5 others
-orientation  landscape (22), portrait (3)
-iso          ≤100 – 3201–6400  (7 values)
-aperture     f/1 – f/11  (10 values)
-focal        <20mm ultra-wide – >600mm super-tele  (6 values)
-hour         02 – 23  (15 values)
-year         2022 – 2025  (3 values)
-month        2022-04 – 2025-08  (15 values)
-day          2022-04-23 – 2025-08-09  (21 values)
+Photos       25
+Total size   1.37 GiB
+Date range   2022-04-23 → 2025-08-09  (3 years, 15 months, 21 days)
+Cameras      11: EOS R5 (11), ILCE-7RM4A (5), GFX100RF (1), +8 others
+Lenses       22  (3 fixed-lens): Apo-Summicron-M 1:2/50 ASPH. (1), E 70-350mm F4.5-6.3 G OSS (1), FE 20-70mm F4 G (1), +19 others
+Makers       8: Canon (11), SONY (7), FUJIFILM (2), +5 others
+Orientation  landscape (22), portrait (3)
+ISO          13 – 6400
+Aperture     f/1 – f/11
+Shutter      1/1250 – 10s
+Focal        14mm – 800mm
+Hour         02 – 23
 ```
 
 两种摘要风格:
-- **enum**(camera / lens / maker / orientation):top 3 + `+N others` 尾巴。值少时全列、不加 +others。
-- **range**(iso / aperture / focal / hour / year / month / day):`first – last  (N values)`,显示有数据的桶的边界 + 数量。
+- **enum**(Cameras / Lenses / Makers / Orientation):top 3 + `+N others`;值≤3 时全列。
+- **range**(ISO / Aperture / Shutter / Focal / Hour):真实极值 `min – max`(不再用桶标签)。
+- **Date range**:展开成 `(N years, N months, N days)` —— 这三个不同的"distinct count"都摊在一行里。
 
 **想看 bar 直方图**?用 `--by`,详细模式带 bar + 百分号:
 

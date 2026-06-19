@@ -284,9 +284,10 @@ def fake_exif(monkeypatch):
 
 
 def test_render_default_is_one_line_distribution() -> None:
-    """Default view (no --by): Summary + a single 'Distribution' table
-    where each dimension shows a ONE-LINE summary — range for ordered
-    bucket dims, top-3+others for enum dims. No bars, no percentages."""
+    """Default view (no --by): a single consolidated Summary block —
+    everything embedded inline (date range expanded to year/month/day,
+    enums as top-3+others, numerics as min–max extents). No 'Distribution'
+    section, no bars, no percentages."""
     records = [
         _record(model="EOS R5", iso=100, lens="RF24-105", date="2024-01-15"),
         _record(model="EOS R5", iso=3200, lens="RF50",   date="2024-02-10"),
@@ -294,10 +295,10 @@ def test_render_default_is_one_line_distribution() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    # Summary block always
+    # Single Summary block
     assert "Summary" in out
-    # Single 'Distribution' block (not 9 sections)
-    assert "Distribution" in out
+    # No separate Distribution section
+    assert "Distribution" not in out
     # NOT the detailed section titles
     assert "By camera" not in out
     assert "By ISO" not in out
@@ -305,10 +306,15 @@ def test_render_default_is_one_line_distribution() -> None:
     # No bars or percentages in default view
     assert "█" not in out
     assert "%" not in out
-    # Spot-check inline summaries
-    assert "EOS R5" in out  # camera top1
-    assert "iso" in out     # dimension label
-    assert "values" in out  # range count word
+    # Date range carries year/month/day distinct counts
+    assert "year" in out
+    assert "month" in out
+    assert "day" in out
+    # Enum dim shown inline
+    assert "EOS R5" in out
+    # Numeric extents shown
+    assert "ISO" in out
+    assert "100 – 3200" in out
 
 
 def test_render_with_explicit_dim_uses_bars() -> None:
@@ -326,58 +332,81 @@ def test_render_with_explicit_dim_uses_bars() -> None:
     assert "%" in out
 
 
-# --- inline summary -------------------------------------------------------
+# --- summary inline rendering ---------------------------------------------
 
-def test_inline_summary_enum_top_3_plus_others() -> None:
-    """Enum dims show top 3 by count plus '+N others' tail when there are more."""
-    from rawkit.stats import _inline_summary
-    items = [
-        {"key": "EOS R5", "count": 11, "share": 0.44},
-        {"key": "ILCE-7RM4A", "count": 5, "share": 0.20},
-        {"key": "GFX100RF", "count": 1, "share": 0.04},
-        {"key": "GR III", "count": 1, "share": 0.04},
-        {"key": "Z5_2", "count": 1, "share": 0.04},
+def test_summary_includes_year_month_day_counts() -> None:
+    """Date range line carries (N years, N months, N days) — the only
+    place those are shown now (no separate Distribution section)."""
+    records = [
+        _record(date="2024-01-15"),
+        _record(date="2024-02-10"),
+        _record(date="2024-02-20"),
+        _record(date="2025-08-01"),
     ]
-    assert _inline_summary("camera", items) == \
-        "EOS R5 (11), ILCE-7RM4A (5), GFX100RF (1), +2 others"
+    s = build_stats(records, [])
+    out = render_default(s)
+    # 2 years (2024, 2025), 3 months (2024-01, 2024-02, 2025-08), 4 days
+    assert "2 years" in out
+    assert "3 months" in out
+    assert "4 days" in out
 
 
-def test_inline_summary_enum_fewer_than_3_no_others() -> None:
-    """When ≤3 keys, list them all without '+N others' tail."""
-    from rawkit.stats import _inline_summary
-    items = [
-        {"key": "landscape", "count": 22, "share": 0.88},
-        {"key": "portrait", "count": 3, "share": 0.12},
+def test_summary_iso_range_is_real_min_max() -> None:
+    """ISO line uses real numeric min/max, NOT bucket labels like '≤100'."""
+    records = [_record(iso=64), _record(iso=12800), _record(iso=400)]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "ISO" in out
+    assert "64 – 12800" in out
+
+
+def test_summary_aperture_range_uses_f_notation() -> None:
+    records = [_record(fnumber=1.4), _record(fnumber=11.0), _record(fnumber=2.8)]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "Aperture" in out
+    assert "f/1.4 – f/11" in out
+
+
+def test_summary_shutter_range_uses_photographer_format() -> None:
+    """Fast shutter shown as 1/N, slow as Ns."""
+    records = [_record(shutter=0.001), _record(shutter=2.0)]  # 1/1000, 2s
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "Shutter" in out
+    assert "1/1000" in out
+    assert "2s" in out
+
+
+def test_summary_camera_top_3_plus_others() -> None:
+    records = [
+        _record(model="EOS R5"),
+        _record(model="EOS R5"),
+        _record(model="EOS R5"),
+        _record(model="X-E5"),
+        _record(model="Z5_2"),
+        _record(model="X2D 100C"),
+        _record(model="GR III"),
     ]
-    assert _inline_summary("orientation", items) == "landscape (22), portrait (3)"
+    s = build_stats(records, [])
+    out = render_default(s)
+    # 5 distinct cameras: top 3 by count + 2 others
+    assert "EOS R5 (3)" in out
+    assert "+2 others" in out
 
 
-def test_inline_summary_range_first_last_count() -> None:
-    """Range-style dims (iso/aperture/focal/hour/year/month/day) show
-    'first – last  (N values)'."""
-    from rawkit.stats import _inline_summary
-    items = [
-        {"key": "≤100", "count": 8, "share": 0.32},
-        {"key": "101–200", "count": 3, "share": 0.12},
-        {"key": "201–400", "count": 7, "share": 0.28},
-        {"key": "401–800", "count": 3, "share": 0.12},
-        {"key": "801–1600", "count": 2, "share": 0.08},
-        {"key": "1601–3200", "count": 1, "share": 0.04},
-        {"key": "3201–6400", "count": 1, "share": 0.04},
+def test_summary_orientation_lists_both_when_only_two() -> None:
+    """Enum with ≤3 distinct: full list without '+N others' tail."""
+    records = [
+        _record(model="X", lens="L1"),
+        _record(model="X", lens="L2"),
     ]
-    assert _inline_summary("iso", items) == "≤100 – 3201–6400  (7 values)"
-
-
-def test_inline_summary_range_single_value() -> None:
-    """Range-style dim with only one bucket: '<key>  (1 value)' (singular)."""
-    from rawkit.stats import _inline_summary
-    assert _inline_summary("iso", [{"key": "≤100", "count": 5, "share": 1.0}]) == \
-        "≤100  (1 value)"
-
-
-def test_inline_summary_empty_returns_dash() -> None:
-    from rawkit.stats import _inline_summary
-    assert _inline_summary("camera", []) == "—"
+    records[0]["orientation"] = "landscape"
+    records[1]["orientation"] = "portrait"
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "landscape (1), portrait (1)" in out
+    assert "+0 others" not in out
 
 
 def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:
