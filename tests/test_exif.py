@@ -236,6 +236,68 @@ def test_bias_and_rating_passthrough(monkeypatch) -> None:
     assert recs[1]["rating"] == 0
 
 
+def test_model_strips_redundant_maker_prefix(monkeypatch) -> None:
+    """Canon/Nikon/Leica/Ricoh write `Model` as `"<MAKER> <body>"` —
+    we drop the maker word because it's already in the `maker` column.
+    Casing is normalized for the comparison so `LEICA M11 Monochrom`
+    matches `Leica Camera AG` (first-word, case-insensitive)."""
+    fake_stdout = json.dumps([
+        {"SourceFile": "canon.CR3",  "Make": "Canon",                         "Model": "Canon EOS R5"},
+        {"SourceFile": "nikon.NEF",  "Make": "NIKON CORPORATION",             "Model": "NIKON Z5_2"},
+        {"SourceFile": "leica.DNG",  "Make": "Leica Camera AG",               "Model": "LEICA M11 Monochrom"},
+        {"SourceFile": "ricoh.DNG",  "Make": "RICOH IMAGING COMPANY, LTD.",   "Model": "RICOH GR III"},
+        # No prefix to strip — left untouched.
+        {"SourceFile": "sony.ARW",   "Make": "SONY",                          "Model": "ILCE-7RM4A"},
+        {"SourceFile": "fuji.RAF",   "Make": "FUJIFILM",                      "Model": "X-E5"},
+        {"SourceFile": "om.ORF",     "Make": "OM Digital Solutions",          "Model": "OM-5MarkII"},
+        {"SourceFile": "hassel.3FR", "Make": "Hasselblad",                    "Model": "X2D 100C"},
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    recs = exif.batch_read([Path(f"x{i}") for i in range(8)])
+    models = [r["model"] for r in recs]
+    assert models == [
+        "EOS R5",          # "Canon " stripped
+        "Z5_2",            # "NIKON " stripped
+        "M11 Monochrom",   # "LEICA " stripped (case-insensitive match)
+        "GR III",          # "RICOH " stripped
+        "ILCE-7RM4A",      # no prefix → untouched
+        "X-E5",            # no prefix → untouched
+        "OM-5MarkII",      # "OM-" has no space after, so the rule (requires
+                           # prefix + space) doesn't fire — left alone.
+        "X2D 100C",        # no prefix → untouched
+    ]
+    # maker column itself is preserved exactly as exiftool emitted it.
+    assert recs[0]["maker"] == "Canon"
+    assert recs[2]["maker"] == "Leica Camera AG"
+
+
+def test_model_prefix_strip_never_yields_empty(monkeypatch) -> None:
+    """Degenerate case: Model is literally just the maker word. The strip
+    would leave an empty string — keep the original instead."""
+    fake_stdout = json.dumps([
+        {"SourceFile": "weird.RAW", "Make": "Canon", "Model": "Canon"},
+    ])
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(exif.shutil, "which", lambda _x: "/fake/exiftool")
+    monkeypatch.setattr(exif.subprocess, "run", lambda *_a, **_kw: FakeProc())
+
+    [r] = exif.batch_read([Path("weird.RAW")])
+    assert r["model"] == "Canon"
+
+
 def test_missing_exiftool_raises_human_message(monkeypatch) -> None:
     monkeypatch.setattr(exif.shutil, "which", lambda _x: None)
     with pytest.raises(exif.ExiftoolMissing) as ei:

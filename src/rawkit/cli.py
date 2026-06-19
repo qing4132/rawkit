@@ -10,7 +10,9 @@ from typing import Any, Iterable
 import typer
 
 from rawkit.exif import safe_batch_read
+from rawkit.preview import PreviewExtractError, extract_preview
 from rawkit.query import QueryError, compile_where
+from rawkit.render import RenderError, render, suffix_for
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -530,3 +532,214 @@ def ls(
         _emit_jsonl(records)
     else:
         _render_table(records, sort_keys=sort_keys, reverse=reverse)
+
+
+# --- preview command --------------------------------------------------------
+
+@app.command()
+def preview(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Files or directories to extract previews from. Defaults to current "
+             "directory. Directories are listed top-level only unless -R.",
+    ),
+    output: Path = typer.Option(
+        Path("./previews"),
+        "--output",
+        "-o",
+        metavar="DIR",
+        help="Output directory. Created if missing. Each preview is written as "
+             "<DIR>/<basename>.jpg (basename = source stem).",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only).",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        "-f",
+        help="Overwrite existing output files. Default: skip with a warning.",
+    ),
+) -> None:
+    """Extract each RAW's largest embedded SOOC JPEG preview.
+
+    Always returns the camera's in-RAW JPEG (100% SOOC colour science).
+    Uses libraw (via rawpy) to reach whatever the camera embedded —
+    typically the full-resolution SOOC frame for Canon CR3 / Sony A1+ /
+    Nikon Z…, the 3000-class reduced-resolution frame for Hasselblad 3FR,
+    or the 1080-class preview for older Sony ARW.
+
+    The 160x120-class navigation thumbnail is intentionally not used.
+
+    Progress and per-file outcomes are reported on stderr; stdout is left
+    empty so you can pipe `find … | xargs rawkit preview` without surprises.
+    """
+    inputs = paths if paths else [Path(".")]
+    raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        return
+
+    output.mkdir(parents=True, exist_ok=True)
+
+    n_ok = 0
+    n_skipped = 0
+    n_failed = 0
+    for raw in raws:
+        out_path = output / f"{raw.stem}.jpg"
+        if out_path.exists() and not overwrite:
+            typer.echo(
+                f"{raw.name}: skip (exists, use -f to overwrite)", err=True
+            )
+            n_skipped += 1
+            continue
+        try:
+            result = extract_preview(raw)
+        except PreviewExtractError as e:
+            typer.echo(f"{raw.name}: failed — {e}", err=True)
+            n_failed += 1
+            continue
+        out_path.write_bytes(result.data)
+        typer.echo(
+            f"{raw.name}: {result.width}x{result.height} -> {out_path}",
+            err=True,
+        )
+        n_ok += 1
+
+    if n_failed or n_skipped:
+        typer.echo(
+            f"\n{n_ok} extracted, {n_skipped} skipped, {n_failed} failed",
+            err=True,
+        )
+    if n_failed:
+        raise typer.Exit(code=1)
+
+
+# --- render command ---------------------------------------------------------
+
+class RenderFormat(str, Enum):
+    """Output formats render can produce. JPEG = small/lossy;
+    TIFF/PNG = lossless (PNG is smaller for low-entropy images, TIFF for
+    photographic content; both are appropriate for archival hand-off)."""
+    jpeg = "jpeg"
+    tiff = "tiff"
+    png  = "png"
+
+
+@app.command("render")
+def cmd_render(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Files or directories to render. Defaults to current directory. "
+             "Directories are listed top-level only unless -R.",
+    ),
+    output: Path = typer.Option(
+        Path("./renders"),
+        "--output",
+        "-o",
+        metavar="DIR",
+        help="Output directory. Created if missing. Each render is written as "
+             "<DIR>/<basename>.<ext> (ext from --format).",
+    ),
+    output_format: RenderFormat = typer.Option(
+        RenderFormat.jpeg,
+        "--format",
+        case_sensitive=False,
+        help="Output container.",
+    ),
+    quality: int = typer.Option(
+        90,
+        "--quality",
+        "-q",
+        min=1,
+        max=100,
+        help="JPEG quality (1-100). Ignored for TIFF/PNG (lossless).",
+    ),
+    max_side: int = typer.Option(
+        0,
+        "--max-side",
+        metavar="N",
+        help="Downscale so the long edge is at most N pixels (LANCZOS). "
+             "0 = keep native sensor resolution.",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only).",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        "-f",
+        help="Overwrite existing output files. Default: skip with a warning.",
+    ),
+) -> None:
+    """Demosaic each RAW via libraw and encode as JPEG/TIFF/PNG.
+
+    Opposite of `preview`: where preview hands back the camera's already-baked
+    SOOC JPEG (fast, 100% SOOC), render decodes the raw Bayer pattern ourselves
+    through libraw and encodes the result fresh.
+
+    \b
+    Colour science WILL drift from SOOC. libraw's defaults are a neutral
+    sRGB pipeline, not Canon Picture Style / Fuji Film Simulation / etc.
+    If you need SOOC colour, use `preview`. If you need fine-grained
+    rendering control (WB, curves, sharpening), use Lightroom / Capture One.
+
+    Render is the right tool when the camera didn't embed a big enough
+    preview (e.g. Sony A7R IV only embeds 1616x1080) or when you want a
+    full-sensor-resolution output that no embedded JPEG provides.
+
+    Throughput: ~0.5-2 seconds per file (real demosaic work), vs
+    preview's ~30ms per file. Don't render thousands when preview
+    would do.
+    """
+    inputs = paths if paths else [Path(".")]
+    raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        return
+
+    output.mkdir(parents=True, exist_ok=True)
+    suffix = suffix_for(output_format.value)
+    max_side_arg: int | None = max_side if max_side > 0 else None
+
+    n_ok = 0
+    n_skipped = 0
+    n_failed = 0
+    for raw in raws:
+        out_path = output / f"{raw.stem}{suffix}"
+        if out_path.exists() and not overwrite:
+            typer.echo(
+                f"{raw.name}: skip (exists, use -f to overwrite)", err=True
+            )
+            n_skipped += 1
+            continue
+        try:
+            result = render(
+                raw,
+                output_format=output_format.value,
+                quality=quality,
+                max_side=max_side_arg,
+            )
+        except RenderError as e:
+            typer.echo(f"{raw.name}: failed — {e}", err=True)
+            n_failed += 1
+            continue
+        out_path.write_bytes(result.data)
+        typer.echo(
+            f"{raw.name}: {result.width}x{result.height} "
+            f"{output_format.value} -> {out_path}",
+            err=True,
+        )
+        n_ok += 1
+
+    if n_failed or n_skipped:
+        typer.echo(
+            f"\n{n_ok} rendered, {n_skipped} skipped, {n_failed} failed",
+            err=True,
+        )
+    if n_failed:
+        raise typer.Exit(code=1)

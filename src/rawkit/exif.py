@@ -135,6 +135,22 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
+    # Strip the redundant maker prefix from `model`. Canon/Nikon/Leica/Ricoh
+    # all write `model` as `"<MAKER> <body>"` (Canon's "Canon EOS R5", Nikon's
+    # "NIKON Z5_2", Leica's "LEICA M11 Monochrom"). We already expose `maker`
+    # separately, so repeating it just bloats the model column in `ls`.
+    # Sony / Fuji / OM / Hasselblad don't add the prefix, so they're untouched.
+    model = out.get("model")
+    maker = out.get("maker")
+    if isinstance(model, str) and isinstance(maker, str) and maker:
+        prefix = maker.split()[0] if maker.split() else ""
+        if prefix:
+            pfx_with_space = (prefix + " ").upper()
+            if model.upper().startswith(pfx_with_space):
+                stripped = model[len(prefix):].lstrip()
+                if stripped:  # don't reduce model to empty string
+                    out["model"] = stripped
+
     if "gps_lat" in out and "gps_lon" in out:
         out["gps"] = True
 

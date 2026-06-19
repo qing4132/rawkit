@@ -3,8 +3,8 @@
 > 给本地 RAW 文件做批处理 / metadata / sidecar / 浏览的现代 Python CLI。
 > **不替代 Lightroom Classic，做 LrC 不做的事**——脚本化的命令行盒子，LrC 旁边那一格。
 
-> ⚠️ 状态:**v0.0.1 / 内测中**。当前已实现 `rawkit ls`（EXIF 列表、`--where`、`--sort`、`--json`）。
-> 其余命令（`thumb` / `export` / `exif` 独立子命令）仍在规划中。
+> ⚠️ 状态:**v0.0.1 / 内测中**。当前已实现 `rawkit ls`(EXIF 列表、`--where`、`--sort`、`--json`)、`rawkit preview`(抽 RAW 内嵌 SOOC JPEG)和 `rawkit render`(libraw demosaic 出 JPEG/TIFF/PNG)。
+> 其余命令(`exif` 独立子命令、sidecar 相关)仍在规划中。
 >
 > 📖 **当前实际能跑什么、怎么敲命令** → 看 [USAGE.md](USAGE.md)(每加一个功能就追加到那里)。本文件只管"为什么/做什么/不做什么"。
 
@@ -19,7 +19,7 @@
    - 一切都可以推翻重做,包括本 README 里所有已拍板的决策
    - 内测圈 = 作者自己 + 几个朋友,够了
 2. **RAW 只读是核心约束**。在整个内测期间,直到出现某个"非做不可"的版本(但愿永远不出现),工具**绝不对原始 RAW 文件做任何写操作**——不改像素、不写 EXIF、不嵌 XMP、不 touch 时间戳。允许的写操作只发生在:
-   - **派生文件**(thumb / export 的输出)
+   - **派生文件**(preview / render 的输出)
    - **sidecar 文件**(`.xmp` / `.json` 等独立于 RAW 的伴生文件)
    - **文件系统级 rename**(`mv`,改文件名/路径,不改 RAW 字节内容)——边缘允许,但默认 `--dry-run`
 3. **一切 Python 相关用 [`uv`](https://github.com/astral-sh/uv) 管理**。依赖、虚拟环境、运行、分发、安装、锁文件全走 uv,不混 `pip` / `pipx` / `poetry` / `conda`。
@@ -29,19 +29,19 @@
    - 拒绝"全家桶"诱惑——撞到"我们也加个 X 吧"的念头时,先问"标准 Unix 工具能做吗?"
    - **直接后果**:`rawkit rename` 从 v0.1 砍掉(`rawkit ls --json | jq | xargs mv` 就够了);未来任何看似有用的命令都要过这道筛
 5. **尽一切可能减轻用户心智负担。本条凌驾于 #4 之上**。当 Unix 纯洁性和"用户少想一秒"冲突时,**永远选后者**。具体推论:
-   - 默认值要"绝大多数情况下不用想":`thumb` 默认输出 `./thumbs/`、`rename` 类操作默认 `--dry-run`、列表默认按时间倒序…
+   - 默认值要"绝大多数情况下不用想":`preview` 默认输出 `./previews/`、`rename` 类操作默认 `--dry-run`、列表默认按时间倒序…
    - **人话错误信息**:"file not found: foo.ARW" 而不是 traceback;"exiftool 没装,`brew install exiftool` 即可"而不是 `FileNotFoundError: [Errno 2]`
    - **同一概念在 rawkit 内永远叫同一个名字**(`--output` 就别再叫 `--to`、`--dest`)
    - 该重复时就重复——`--where` 的 mini-DSL 严格说违反 #4(`find + exiftool + jq` 能做),但**让摄影玩家少学一个 jq = 值得**
    - `-h` / `--help` 是一等公民:每个子命令的 help 必须**一屏看完**就知道怎么用,而不是"请阅读 man page"
-   - 不强迫用户记忆顺序:`rawkit thumb FILES -o DIR` 和 `rawkit thumb -o DIR FILES` 都应该工作
+   - 不强迫用户记忆顺序:`rawkit preview FILES -o DIR` 和 `rawkit preview -o DIR FILES` 都应该工作
 6. **作者随时可能追加新的强约束**(本条永远在最后)。
 
 ---
 
 ## 一句话定位
 
-**RAW 摄影玩家的 imagemagick**:一条命令批量 inspect、提缩略图、改 metadata、操作 sidecar、按 EXIF 查询/重命名/导出。CLI 优先,Python 库其次。
+**RAW 摄影玩家的 imagemagick**:一条命令批量 inspect、提 SOOC 预览、改 metadata、操作 sidecar、按 EXIF 查询/重命名/导出。CLI 优先,Python 库其次。
 
 ---
 
@@ -49,7 +49,7 @@
 
 - **现状很烂**:`exiftool` 是 Perl 写的 25 年老怪、语法折磨;`dcraw` 死了;`ImageMagick` 处理 RAW 颜色拉胯;LrC catalog 是 SQLite 黑盒,坏了哭一周。"现代的、Python 的、给玩家做批处理"的干净 CLI **不存在**。
 - **作者就是用户**:只拍 RAW,每次出门回来都几百张要处理——自带 forcing function,不靠"想象的用户"。
-- **绕开 LrC 红线**:不是替代品、不是插件,是 LrC 之外的纯脚本场。导入前批量改 metadata、按 EXIF 筛选、提缩略图给别的脚本用——都是 LrC 做不了或做得很痛的事。
+- **绕开 LrC 红线**:不是替代品、不是插件,是 LrC 之外的纯脚本场。导入前批量改 metadata、按 EXIF 筛选、提 SOOC 预览给别的脚本用——都是 LrC 做不了或做得很痛的事。
 - **几何级生命力**:RAW 格式只增不减(每个新机型一种 .ARW / .CR3 / .NEF / .RAF / .DNG…)。exiftool 一个人养 25 年证明这是地质级范畴。
 - **单人可养**:核心是文件 IO + libraw 调用 + EXIF 解析,零算法,Python + rawpy + exiftool 起步。
 
@@ -60,7 +60,7 @@
 ### Year 1 — 命令行瑞士军刀
 ```bash
 rawkit ls *.ARW --where 'iso>3200 and lens~"50"'
-rawkit thumb *.CR3 --size 1024 --to ./preview/
+rawkit preview *.CR3 -o ./previews/
 rawkit exif get *.RAF --fields iso,lens,copyright              # 只读
 rawkit diff a.xmp b.xmp                                        # sidecar 之间比较
 
@@ -100,7 +100,7 @@ Adobe Sensei 锁云端 + 订阅;rawkit 本地 + 免费 + 用户自己的 API key
 ### Year 5 — 事实标准
 ```python
 import rawkit
-rawkit.thumb("photo.ARW", size=2048)
+rawkit.preview("photo.ARW")
 ```
 被别的开源项目当 imagemagick 调:静态站发布工具、家庭相册项目、Astro/Hugo 主题。`brew install rawkit` 进入摄影玩家工具链推荐列表。
 
@@ -142,22 +142,22 @@ rawkit.thumb("photo.ARW", size=2048)
 
 一句话:现在的重点不再是“把架子搭起来”,而是围绕 `ls` 做真实 dogfood,再决定 v0.1.x 的下一刀。
 
-### v0.1 拆分:先 ls+thumb,再谈其他
+### v0.1 拆分:先 ls+preview,再谈其他
 
-- **v0.1.0** = `ls --where` + `thumb` 两个命令跑通下面验收剧本第 1 条管道
+- **v0.1.0** = `ls --where` + `preview` 两个命令跑通下面验收剧本第 1 条管道
 - **v0.1.x** = 第一次真实 dogfood 后才动 `exif` / `export` / `diff`(让真痛点决定优先级,而不是现在干猜)
 
-理由:从 0 到 1 的价值远大于从 4 到 5。`ls + thumb` 是变成"你下次拍完真会用"的最短路径。
+理由:从 0 到 1 的价值远大于从 4 到 5。`ls + preview` 是变成"你下次拍完真会用"的最短路径。
 
 ### 验收剧本(MVP 跑通的判据)
 
 带最近一卷 ≥100 张 RAW,全程不开 LrC,跑通:
 
 ```bash
-# 1) 按 EXIF 筛选 + 提缩略图(证明管道组合可用)
+# 1) 按 EXIF 筛选 + 提 SOOC 预览(证明管道组合可用)
 rawkit ls ~/Pictures/2026-06-17/ --where 'iso<800 and lens~"50"' --json \
   | jq -r '.path' \
-  | rawkit thumb - -o cull/ --size 1024
+  | rawkit preview - -o cull/
 
 # 2) 按机型 + 日期重命名(组合 mv,硬约束 #4)
 rawkit ls ~/Pictures/2026-06-17/ --json \
@@ -171,12 +171,13 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 
 ### 命令清单(v0.1 共 4 个)
 
-#### `rawkit thumb`
-- 签名:`rawkit thumb FILES... [-o thumbs/] [--size 1024] [-f]`
-- 抽**内嵌 JPEG 缩略图**(不解 RAW,快);缺缩略图时 stderr 警告并跳过
-- 默认输出 `./thumbs/`,文件已存在则跳过;`-f` 强制覆盖
+#### `rawkit preview`
+- 签名:`rawkit preview FILES... [-o previews/] [-f]`
+- 抽**内嵌 SOOC JPEG 预览**(不解 RAW,快);缺预览时 stderr 警告并跳过
+- 默认输出 `./previews/`,文件已存在则跳过;`-f` 强制覆盖
+- 不做 resize(Unix 哲学,交给 `sips` / `magick mogrify` / `vipsthumbnail`)
 - 接受:目录(递归)/ 文件列表 / `-`(从 stdin 读路径)
-- `--size` 暂时只裁不放大(内嵌缩略图通常 1620px 左右)
+- 抽出尺寸取决于机型:Canon CR3/Sony A1/Nikon Z/Leica M11 给近似全分辨率;Sony A7R IV 只给 1616×1080;中画幅给 3000~4000 中档
 
 #### `rawkit exif`
 - 签名:`rawkit exif FILE [--json] [--fields iso,lens,fnumber]`
@@ -191,10 +192,11 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 - 当前未做内建“翻页/分页”,大批量查看先用 Unix 管道(`less -S` / `head` / `tail`)
 - **实现注意**:`exiftool` 必须**一次调用传所有路径**(`exiftool -j f1 f2 f3...`),不要每文件 fork 一次,否则 1000 张就要分钟级
 
-#### `rawkit export`
-- 签名:`rawkit export FILES... [-o exports/] [--format jpeg|png] [--quality 90] [--size 2048]`
-- 走 `rawpy` 全解码(非内嵌缩略图);v0.1 用 rawpy 默认参数
-- **不暴露**白平衡/曲线(那是 LrC 的活);长边 resize 到 `--size`
+#### `rawkit render`
+- 签名:`rawkit render FILES... [-o renders/] [--format jpeg|tiff|png] [--quality 90] [--max-side 2048]`
+- 走 `rawpy` 全解码(libraw demosaic,**色彩科学会偏 SOOC**——与 `preview` 互补)
+- v0.1 用 rawpy 默认参数;**不暴露**白平衡/曲线(那是 LrC 的活)
+- 长边 resize 到 `--max-side`(可选)
 
 ### `--where` 表达式语法 v1
 
@@ -234,8 +236,8 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 3. `rawkit exif`(最简单,先打通 exiftool 链路与 `--json` 输出契约)
 4. `rawkit ls`(不带 where 的最小版,默认对齐表,**批量调 exiftool**)
 5. `src/rawkit/query.py`:`lark` 实现 `--where` v1 + 单测覆盖全部语法
-6. `rawkit thumb`(stdin `-` / `-f` / stderr 警告)
-7. `rawkit export`(rawpy 全解码 + resize)
+6. `rawkit preview`(stdin `-` / `-f` / stderr 警告)
+7. `rawkit render`(rawpy 全解码 + resize)
 8. **Dogfood**:跑一次验收剧本,记 issue → v0.2
 
 ---
@@ -271,7 +273,7 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 - ❌ **不用 `eval()` 实现 `--where`**——安全和稳定性都崩
 - ❌ **stdout 不许混日志/进度条**——管道契约神圣
 - ❌ **没真实基准前不重写 Rust**——优化没量化指标就是自嗨
-- ❌ **不把缩略图当渲染**——`rawkit thumb` 抽内嵌 JPEG,`rawkit export` 才是真解码
+- ❌ **不把预览当渲染**——`rawkit preview` 抽内嵌 JPEG(SOOC),`rawkit render` 才是真解码(会色偏)
 
 ---
 
