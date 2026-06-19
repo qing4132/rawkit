@@ -430,7 +430,7 @@ def test_ls_sort_breaks_ties_by_subsecond(tmp_path, monkeypatch) -> None:
 
 
 def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
-    """A 79-char outlier filename must break alignment only on its own row,
+    """A pathologically long filename must break alignment only on its own row,
     not pad every other row's file column."""
     short = tmp_path / "short.ARW"
     long_name = tmp_path / ("really_long_" + "x" * 60 + ".ARW")  # 76+ chars

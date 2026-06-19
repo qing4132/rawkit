@@ -285,6 +285,10 @@ def _render_table(
     value so no data is ever truncated. Output may exceed the terminal width;
     in that case `| less -S` (horizontal scroll) is the standard escape hatch.
 
+    A pathologically wide value in the file or lens column won't widen those
+    columns for every other row — they have a soft cap, see `_soft_capped_width`.
+    The outlier row itself just overflows its own column.
+
     When stdout is a TTY (and NO_COLOR isn't set) the header row is bold,
     and the active sort column gets an ASC/DESC arrow suffix. We do NOT
     color any cells — not even the sort header — because color is too
