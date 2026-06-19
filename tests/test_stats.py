@@ -283,9 +283,10 @@ def fake_exif(monkeypatch):
     return fake
 
 
-def test_render_default_is_summary_plus_month() -> None:
-    """Default view: Summary block + a single 'By month' section. Other
-    dimensions are opt-in via --by."""
+def test_render_default_is_compact_overview() -> None:
+    """Default view (no --by): Summary + every canonical dimension in
+    COMPACT form (key + count, no bars no percentages). Designed for
+    one-shot 'show me all angles' glance."""
     records = [
         _record(model="EOS R5", iso=100, lens="RF24-105", date="2024-01-15"),
         _record(model="EOS R5", iso=3200, lens="RF50",   date="2024-02-10"),
@@ -293,13 +294,35 @@ def test_render_default_is_summary_plus_month() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
+    # Summary always
     assert "Summary" in out
+    # All canonical dimensions present in compact form
+    assert "By camera" in out
+    assert "By lens" in out
+    assert "By ISO" in out
+    assert "By aperture" in out
+    assert "By focal length" in out
+    assert "By hour of day" in out
     assert "By month" in out
-    # Other dimensions should NOT be in default output
-    assert "By camera" not in out
-    assert "By ISO" not in out
-    assert "By lens" not in out
-    assert "█" in out
+    # No bars in compact overview
+    assert "█" not in out
+    # No percentages either
+    assert "%" not in out
+
+
+def test_render_with_explicit_dim_uses_bars() -> None:
+    """`--by foo` switches to DETAILED mode with bar charts."""
+    from rawkit.stats import render
+    records = [
+        _record(model="EOS R5", iso=100),
+        _record(model="EOS R5", iso=400),
+        _record(model="X-E5",   iso=3200),
+    ]
+    s = build_stats(records, [])
+    out = render(s, dims=["camera"])
+    assert "By camera" in out
+    assert "█" in out  # bars present in detailed mode
+    assert "%" in out
 
 
 def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:

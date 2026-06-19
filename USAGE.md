@@ -520,7 +520,9 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 - `--recursive, -R`:递归
 - `--json`:输出完整结构化聚合(不受 `--by`/`--top` 影响),供脚本
 
-### 默认输出(Summary + by month)
+### 默认输出(紧凑全维度概览)
+
+不加 `--by` 时,默认输出 Summary + **每个维度的紧凑列表**(无 bar、无百分号),一屏看完所有视角:
 
 ```bash
 rawkit stats samples/
@@ -535,21 +537,50 @@ Date range  2022-04-23 → 2025-08-09  (1205 days)
 Cameras     11
 Lenses      22  (3 fixed-lens)
 
-By month
+By camera
 ────────────────────────────────────────────────────────
-2022-04  1  █                                 4%
-2022-05  2  ██                                8%
+EOS R5         11
+ILCE-7RM4A      5
+GFX100RF        1
 ...
+
+By lens (top 5)
+────────────────────────────────────────────────────────
+Apo-Summicron-M 1:2/50 ASPH.  1
+...
+... 17 more lenses hidden (--more or --top N to see all)
+
+By maker
+────────────────────────────────────────────────────────
+Canon                        11
+SONY                          7
+...
+
+By orientation
+────────────────────────────────────────────────────────
+landscape  22
+portrait    3
+
+By ISO
+────────────────────────────────────────────────────────
+≤100       8
+101–200    3
+201–400    7
+...
+
+By aperture / By focal length / By hour of day / By month  (...同样紧凑列表)
 ```
 
-组合多维度 = 多段叠加(Summary 总在头部):
+紧凑模式覆盖的维度:`camera` / `lens(top 5)` / `maker` / `orientation` / `iso` / `aperture` / `focal` / `hour` / `month`(`year` / `day` 不在默认集,避免跟 month 重复)。
+
+**想看 bar 直方图**?用 `--by`,详细模式带 bar + 百分号:
 
 ```bash
-rawkit stats samples/ --by camera,lens,year   # Summary + by camera + by lens + by year
-rawkit stats samples/ --by month,hour         # 时间两维度浏览
+rawkit stats samples/ --by month         # 月度密度,带 bar
+rawkit stats samples/ --by camera,lens   # 多个维度,每个独立 bar
 ```
 
-视觉规则:表头加粗(TTY 时)、横线分隔、bar 用 `█`、不染色、不用 emoji、百分号纵向对齐。
+视觉规则:表头加粗(TTY)、横线分隔、bar 用 `█`、不染色、不用 emoji。
 
 ### `--by` 单维度或多维度
 

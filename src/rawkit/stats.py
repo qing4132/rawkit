@@ -294,14 +294,15 @@ _HRULE = "─" * 56  # matches default 4-section block width
 def _section(title: str, rows: list[tuple[str, str, str]]) -> str:
     """Render one section: bold title (if TTY upstream), hrule, key/count/share rows.
     All bar/share formatting is precomputed by the caller; we just align.
-    Rows are (key, count_str, bar_with_share)."""
+    Rows are (key, count_str, bar_with_share). When the third column is
+    empty (compact mode), trailing whitespace is stripped."""
     if not rows:
         return ""
     key_w = max(len(r[0]) for r in rows)
     count_w = max(len(r[1]) for r in rows)
     lines = [title, _HRULE]
     for key, count, bar in rows:
-        lines.append(f"{key:<{key_w}}  {count:>{count_w}}  {bar}")
+        lines.append(f"{key:<{key_w}}  {count:>{count_w}}  {bar}".rstrip())
     return "\n".join(lines)
 
 
@@ -316,6 +317,17 @@ def _build_dist_rows(items: list[dict[str, Any]], top: int | None = None) -> lis
         # Pad the bar to fixed width (in *cells*, not bytes; '█' is single-cell).
         bar_padded = bar + " " * (_BAR_WIDTH - len(bar))
         rows.append((str(it["key"]), str(it["count"]), f"{bar_padded}  {_fmt_share(it['share'])}"))
+    return rows
+
+
+def _build_compact_rows(items: list[dict[str, Any]], top: int | None = None) -> list[tuple[str, str, str]]:
+    """Like _build_dist_rows but with NO bar and NO percentage — just
+    `key  count` for compact multi-dimension overview. The third tuple
+    field is empty so _section's alignment logic still works."""
+    rows: list[tuple[str, str, str]] = []
+    display = items if top is None else items[:top]
+    for it in display:
+        rows.append((str(it["key"]), str(it["count"]), ""))
     return rows
 
 
@@ -348,10 +360,15 @@ def _render_one_dim(
     dimension: str,
     *,
     top: int | None,
+    compact: bool = False,
 ) -> str:
     """Render one dimension as a section. `top` only takes effect on
     'lens' (the only dimension where the count of distinct keys can blow
-    up); other dimensions ignore it because their buckets are bounded."""
+    up); other dimensions ignore it because their buckets are bounded.
+
+    `compact=True` skips the bar chart and percentage column — just
+    'key  count' rows. Used in the default 'overview of all dimensions'
+    view where bars would dominate the screen."""
     if dimension not in _DIMENSIONS:
         raise ValueError(f"unknown dimension {dimension!r}; valid: {supported_dimensions()}")
     title, key = _DIMENSIONS[dimension]
@@ -366,11 +383,10 @@ def _render_one_dim(
     apply_top = dimension in {"lens"}
     effective_top = top if apply_top else None
 
-    rows = _build_dist_rows(items, top=effective_top)
+    builder = _build_compact_rows if compact else _build_dist_rows
+    rows = builder(items, top=effective_top)
     if apply_top and top is not None and len(items) > top:
         sec = _section(f"{title} (top {top})", rows)
-        # English plural — special-case 'lens' (the only dimension that
-        # gets here today) rather than naive +'s'.
         plural = {"lens": "lenses"}.get(dimension, dimension + "s")
         sec += (
             f"\n... {len(items) - top} more {plural} hidden "
@@ -380,6 +396,17 @@ def _render_one_dim(
     return _section(title, rows)
 
 
+# The canonical dimensions shown in the default overview (no --by). Order
+# matters: this is the read order. We pick one alias per concept
+# (camera/aperture rather than model/fnumber), and one calendar grain
+# (month) — year/day are too coarse/too fine for a glance.
+_DEFAULT_OVERVIEW_DIMS: tuple[str, ...] = (
+    "camera", "lens", "maker", "orientation",
+    "iso", "aperture", "focal",
+    "hour", "month",
+)
+
+
 def render(
     stats: dict[str, Any],
     *,
@@ -387,39 +414,38 @@ def render(
     lens_top: int = 5,
     where: str = "",
 ) -> str:
-    """Render Summary + one section per dimension in `dims`.
+    """Render Summary + one section per dimension.
 
-    Default `dims` = `["month"]` — Summary plus monthly density is the
-    most universally useful glance. For other dimensions or to combine
-    several pass them explicitly:
+    When `dims` is None (the default), produce a COMPACT overview of all
+    canonical dimensions — `key  count` only, no bar charts. Designed to
+    fit on a screen and let users glance at every angle at once.
 
-      render(stats, dims=["month"])               # default
-      render(stats, dims=["camera", "lens"])      # multi-section
-      render(stats, dims=["year", "camera"])
+    When `dims` is given, produce DETAILED bar-chart sections for the
+    chosen dimensions only. Multi-dim lists stack as separate sections.
+
+      render(stats)                            # compact overview, all dims
+      render(stats, dims=["month"])            # detailed bar chart
+      render(stats, dims=["camera", "lens"])   # two detailed sections
     """
     total = stats.get("total", {})
     if total.get("count", 0) == 0:
         return "no records"
 
-    if dims is None:
-        dims = ["month"]
-
     sections = [_render_summary(stats, where)]
-    for dim in dims:
-        sec = _render_one_dim(stats, dim, top=lens_top)
-        if sec:
-            sections.append(sec)
+    if dims is None:
+        # Compact overview: every canonical dimension, no bars.
+        for dim in _DEFAULT_OVERVIEW_DIMS:
+            sec = _render_one_dim(stats, dim, top=lens_top, compact=True)
+            if sec:
+                sections.append(sec)
+    else:
+        # Detailed: chosen dims with bar charts.
+        for dim in dims:
+            sec = _render_one_dim(stats, dim, top=lens_top, compact=False)
+            if sec:
+                sections.append(sec)
 
-    out = "\n\n".join(sections)
-
-    # When the entire output is a subset (--where), show that on the by-X
-    # titles too so screenshots / shared output can't misread as full library.
-    if where:
-        n = total.get("count", 0)
-        # Append a single global filter caption after the summary block,
-        # but only the summary already shows 'Filter'; rely on that.
-        pass
-    return out
+    return "\n\n".join(sections)
 
 
 # Backwards-compatible thin wrappers for callers / tests that referred to
