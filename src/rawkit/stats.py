@@ -209,10 +209,12 @@ def build_stats(
     focal_min, focal_max     = _extent("focal")
     shutter_min, shutter_max = _extent("shutter")
 
-    # Hour extent extracted from the `time` field (HH:MM[:SS]).
+    # Hours extracted from the `time` field (HH:MM[:SS]). Stored as a
+    # sorted list of distinct hours so the renderer can collapse runs
+    # of consecutive hours into ranges (e.g. 02–04, 22–23) instead of
+    # silently swallowing midday gaps with a single min–max.
     hours = [int(r["time"][:2]) for r in records if isinstance(r.get("time"), str) and len(r["time"]) >= 2]
-    hour_min = min(hours) if hours else None
-    hour_max = max(hours) if hours else None
+    hours_present = sorted(set(hours))
 
     models = [r["model"] for r in records if r.get("model")]
     lenses = [r["lens"] for r in records if r.get("lens")]
@@ -262,7 +264,7 @@ def build_stats(
             "fnumber_min": fnumber_min, "fnumber_max": fnumber_max,
             "focal_min": focal_min, "focal_max": focal_max,
             "shutter_min": shutter_min, "shutter_max": shutter_max,
-            "hour_min": hour_min, "hour_max": hour_max,
+            "hours_present": hours_present,
         },
         "by_model": _ranked(models),
         "by_maker": _ranked([r["maker"] for r in records if r.get("maker")]),
@@ -419,6 +421,27 @@ def _fmt_hour(h: int | None) -> str:
     return f"{int(h):02d}"
 
 
+def _hours_inline(hours: list[int]) -> str:
+    """Collapse a sorted list of distinct hours into segment notation.
+    Consecutive hours fold into 'lo–hi'; isolated hours stay single.
+    [2,3,4,22,23] → '02–04, 22–23'.  [10] → '10'.  [] → '—'."""
+    if not hours:
+        return "—"
+    segments: list[tuple[int, int]] = []
+    lo = prev = hours[0]
+    for h in hours[1:]:
+        if h == prev + 1:
+            prev = h
+        else:
+            segments.append((lo, prev))
+            lo = prev = h
+    segments.append((lo, prev))
+    return ", ".join(
+        _fmt_hour(a) if a == b else f"{_fmt_hour(a)}–{_fmt_hour(b)}"
+        for a, b in segments
+    )
+
+
 def _enum_inline(items: list[dict[str, Any]], n_distinct: int) -> str:
     """`{count} ({key})` for each top-3 item, plus '+N others' when there
     are more. e.g. '22 (landscape), 3 (portrait)'. `n_distinct` is the
@@ -470,7 +493,7 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     aperture_line= _range(total.get("fnumber_min"), total.get("fnumber_max"), _fmt_aperture)
     shutter_line = _range(total.get("shutter_min"), total.get("shutter_max"), _fmt_shutter)
     focal_line   = _range(total.get("focal_min"),   total.get("focal_max"),   _fmt_focal)
-    hour_line    = _range(total.get("hour_min"),    total.get("hour_max"),    _fmt_hour)
+    hour_line    = _hours_inline(total.get("hours_present", []))
 
     rows: list[tuple[str, str]] = []
     if where:

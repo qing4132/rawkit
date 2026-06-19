@@ -532,11 +532,11 @@ rawkit stats samples/
 Photos        25
 Total size    1.37 GiB
 Date range    2022-04-23 → 2025-08-09  (3 years, 3 months, 17 days)
-Hour          02 – 23
+Hour          02–03, 06, 10–12, 14–20, 22–23
 Cameras       11
 Lenses        22
 Orientation   22 (landscape), 3 (portrait)
-ISO           13 – 6400
+ISO           64 – 6400
 Aperture      f/1 – f/11
 Shutter       1/1250 – 10s
 Focal length  14mm – 800mm
@@ -544,7 +544,7 @@ Focal length  14mm – 800mm
 
 字段含义:
 - **Date range**:`(N years, N months, N days)` 是 start→end 的**日历分解**(年+月+天合在一起就是这段跨度,不是三个独立的"全年数 / 全月数 / 全天数")。
-- **Hour**:当前为 `min – max` 极值,**有 bug**:中间小时全空时极值会显得连续,后续会改为分段显示(如 `02–04, 22–23`)。
+- **Hour**:把出现过的小时按连续段合并显示,孤立小时单写;`02–03, 06, 10–12` 表示中间真有空段,而不是 02–12 那种被压平的极值。
 - **Cameras / Lenses**:不同型号 / 镜头的数量。
 - **Orientation**:`{count} ({key})` 形式,top 3 + `+N others`(值少时全列)。
 - **ISO / Aperture / Shutter / Focal length**:真实极值 `min – max`。

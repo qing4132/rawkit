@@ -30,7 +30,11 @@ _FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("Make",               "maker"),
     ("Model",              "model"),
     ("LensModel",          "lens"),
-    ("ISO",                "iso"),
+    # Lock to EXIF group: Pentax/Ricoh writes a private logarithmic
+    # sensitivity index in MakerNotes:ISO that exiftool's `-n` mode
+    # surfaces as a small integer (e.g. 13 instead of 500). Without
+    # the EXIF: prefix that value silently overwrites EXIF:ISO.
+    ("EXIF:ISO",           "iso"),
     ("FNumber",            "fnumber"),
     ("ExposureTime",       "shutter"),
     ("FocalLength",        "focal"),
@@ -92,8 +96,11 @@ def batch_read(paths: Iterable[Path]) -> list[dict[str, Any]]:
 def _normalize(record: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for tag, key in _FIELD_MAP:
-        if tag in record and record[tag] not in (None, ""):
-            out[key] = record[tag]
+        # exiftool's JSON output keys by the bare tag name even when the
+        # request was group-qualified (`-EXIF:ISO` still emits `"ISO"`).
+        json_key = tag.rsplit(":", 1)[-1]
+        if json_key in record and record[json_key] not in (None, ""):
+            out[key] = record[json_key]
 
     # datetime / date / time three-field split.
     # exiftool returns 'YYYY:MM:DD HH:MM:SS' (legacy EXIF format with colons in
