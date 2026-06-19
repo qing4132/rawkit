@@ -339,8 +339,9 @@ def test_render_with_explicit_dim_uses_bars() -> None:
 # --- summary inline rendering ---------------------------------------------
 
 def test_summary_includes_year_month_day_counts() -> None:
-    """Date range line carries (N years, N months, N days) — the only
-    place those are shown now (no separate Distribution section)."""
+    """Date range line carries the span re-measured in three units
+    (years / months / days). All three describe the *same* span
+    independently — not distinct calendar bucket counts."""
     records = [
         _record(date="2024-01-15"),
         _record(date="2024-02-10"),
@@ -349,10 +350,10 @@ def test_summary_includes_year_month_day_counts() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    # 2 years (2024, 2025), 3 months (2024-01, 2024-02, 2025-08), 4 days
-    assert "2 years" in out
-    assert "3 months" in out
-    assert "4 days" in out
+    # 2024-01-15 → 2025-08-01 = 1 full year, 18 full months, 564 days
+    assert "1 year," in out
+    assert "18 months," in out
+    assert "564 days" in out
 
 
 def test_summary_iso_range_is_real_min_max() -> None:
@@ -395,7 +396,11 @@ def test_summary_camera_top_3_plus_others() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    assert "Cameras      5" in out
+    # 5 distinct cameras, but no model names or '+others' tail.
+    # Don't hard-code padding (key column width depends on the longest
+    # label, which can shift with future renames).
+    cam_row = next(ln for ln in out.splitlines() if ln.startswith("Cameras"))
+    assert cam_row.split()[-1] == "5"
     assert "EOS R5" not in out
     assert "others" not in out
 

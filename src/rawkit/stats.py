@@ -173,12 +173,23 @@ def build_stats(
         except ValueError:
             pass
 
-    # Distinct year / month / day counts (values where photos exist).
-    # Three independent calendar dimensions: distinct YYYY, distinct
-    # calendar month (1–12), distinct calendar day-of-month (1–31).
-    n_years  = len({d[:4]   for d in dates}) if dates else 0
-    n_months = len({d[5:7]  for d in dates}) if dates else 0
-    n_days   = len({d[8:10] for d in dates}) if dates else 0
+    # Span of the date range expressed in three independent units: full
+    # years, full months, full days (each is the *same* span re-measured,
+    # so 3 years / 39 months / 1204 days are all valid views of one span).
+    span_years = span_months = span_days = 0
+    if dates:
+        try:
+            d0 = datetime.strptime(dates[0], "%Y-%m-%d").date()
+            d1 = datetime.strptime(dates[-1], "%Y-%m-%d").date()
+            span_days = (d1 - d0).days
+            span_years = d1.year - d0.year
+            if (d1.month, d1.day) < (d0.month, d0.day):
+                span_years -= 1
+            span_months = (d1.year - d0.year) * 12 + (d1.month - d0.month)
+            if d1.day < d0.day:
+                span_months -= 1
+        except ValueError:
+            pass
 
     # Numeric extents (real values, not bucket names).
     def _extent(field: str) -> tuple[Any, Any]:
@@ -234,9 +245,9 @@ def build_stats(
             "bytes_human": _bytes_human(total_bytes),
             "date_range": date_range,
             "days_spanned": days_spanned,
-            "n_years": n_years,
-            "n_months": n_months,
-            "n_days": n_days,
+            "span_years":  span_years,
+            "span_months": span_months,
+            "span_days":   span_days,
             "n_models": len(set(models)),
             "n_lenses": len(set(lenses)),
             "n_makers": len({r["maker"] for r in records if r.get("maker")}),
@@ -426,15 +437,15 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
         return "no records"
 
     dr = total.get("date_range", [None, None])
-    n_years  = total.get("n_years",  0)
-    n_months = total.get("n_months", 0)
-    n_days   = total.get("n_days",   0)
+    sy = total.get("span_years",  0)
+    sm = total.get("span_months", 0)
+    sd = total.get("span_days",   0)
     if dr[0]:
         date_str = (
             f"{dr[0]} \u2192 {dr[1]}  "
-            f"({n_years} year{'s' if n_years != 1 else ''}, "
-            f"{n_months} month{'s' if n_months != 1 else ''}, "
-            f"{n_days} day{'s' if n_days != 1 else ''})"
+            f"({sy} year{'s' if sy != 1 else ''}, "
+            f"{sm} month{'s' if sm != 1 else ''}, "
+            f"{sd} day{'s' if sd != 1 else ''})"
         )
     else:
         date_str = "\u2014"
@@ -467,7 +478,7 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     rows.append(("ISO",          iso_line))
     rows.append(("Aperture",     aperture_line))
     rows.append(("Shutter",      shutter_line))
-    rows.append(("Focal",        focal_line))
+    rows.append(("Focal length", focal_line))
     rows.append(("Hour",         hour_line))
 
     key_w = max(len(k) for k, _ in rows)
