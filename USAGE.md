@@ -527,21 +527,21 @@ rawkit stats samples/
 ```
 
 ```
-总览
+Summary
 ────────────────────────────────────────────────────────
-张数        25
-文件总大小  1.37 GiB
-时间跨度    2022-04-23 → 2025-08-09  (1205 天)
-机型种类    11
-镜头种类    22  (含 3 张定焦机)
+Photos      25
+Total size  1.37 GiB
+Date range  2022-04-23 → 2025-08-09  (1205 days)
+Cameras     11
+Lenses      22  (3 fixed-lens)
 
-按机型
+By camera
 ────────────────────────────────────────────────────────
 EOS R5         11  █████████████                    44%
 ILCE-7RM4A      5  ██████                           20%
 ...
 
-按 ISO(对数分桶)
+By ISO (log-scale buckets)
 ────────────────────────────────────────────────────────
 ≤100       8  ██████████                       32%
 101–200    3  ████                             12%
@@ -551,11 +551,11 @@ ILCE-7RM4A      5  ██████                           20%
 1601–3200  1  █                                 4%
 3201–6400  1  █                                 4%
 
-按镜头(top 5)
+By lens (top 5)
 ────────────────────────────────────────────────────────
 RF24-105mm F4 L IS USM  2  ██                               8%
 ...
-... 还有 17 种镜头未显示 (--more / --top N / --by lens 看全)
+... 17 more lenses hidden (--more / --top N / --by lens to see all)
 ```
 
 视觉规则:表头加粗(TTY 时)、横线分隔、bar 用 `█`、不染色、不用 emoji、百分号纵向对齐。
@@ -576,14 +576,14 @@ rawkit stats samples/ --by lens      # 完整镜头分布,不 top 截断
 # 高 ISO 都在哪个时段拍的?
 rawkit stats samples/ --where 'iso>=3200' --by hour
 
-# Sony 机器的统计(默认 4 段会带 "筛选" 一行)
+# Sony 机器的统计(默认 4 段会带 "Filter" 一行)
 rawkit stats samples/ --where 'maker~"Sony"'
 
 # 今年某焦段的拍摄量按月分布
 rawkit stats ~/Pictures -R --where 'date>="2026-01-01" and focal>=70 and focal<=200' --by month
 ```
 
-`--by` 视图的标题会带 caption:`按 ISO  ·  筛: iso>=400  ·  13 张`,让你一眼看出当前是子集统计。
+`--by` 视图的标题会带 caption:`By ISO  ·  filter: iso>=400  ·  n=13`,让你一眼看出当前是子集统计。
 
 ### JSON 输出(供脚本)
 

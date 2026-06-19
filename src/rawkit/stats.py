@@ -52,12 +52,12 @@ _STD_APERTURES: tuple[float, ...] = (
 # Focal-length classes (mm, 35mm-equivalent assumed; we don't try to
 # normalise for crop because EXIF rarely carries equivalent focal).
 _FOCAL_BUCKETS: tuple[tuple[float, float, str], ...] = (
-    (0.0,     20.0,    "<20mm 超广"),
-    (20.0,    35.0,    "20–35mm 广角"),
-    (35.0,    70.0,    "35–70mm 标准"),
-    (70.0,    200.0,   "70–200mm 中长"),
-    (200.0,   600.0,   "200–600mm 长焦"),
-    (600.0,   10000.0, ">600mm 超长"),
+    (0.0,     20.0,    "<20mm ultra-wide"),
+    (20.0,    35.0,    "20-35mm wide"),
+    (35.0,    70.0,    "35-70mm standard"),
+    (70.0,    200.0,   "70-200mm tele"),
+    (200.0,   600.0,   "200-600mm long"),
+    (600.0,   10000.0, ">600mm super-tele"),
 )
 
 # 3-hour blocks; photographers think in golden-hour / blue-hour / midday
@@ -301,9 +301,9 @@ def render_default(
     lens_top: int = 5,
     where: str = "",
 ) -> str:
-    """Render the 4-section default view: 总览 / by model / by ISO / by lens (top N).
+    """Render the 4-section default view: Summary / by model / by ISO / by lens (top N).
 
-    `where` (if given) is shown as a small caption beneath '总览' so a
+    `where` (if given) is shown as a small caption beneath 'Summary' so a
     subset stats run doesn't look like the whole library.
     """
     total = stats.get("total", {})
@@ -313,54 +313,54 @@ def render_default(
     # Section 1: total summary as a plain key/value table.
     dr = total.get("date_range", [None, None])
     days = total.get("days_spanned", 0)
-    date_str = f"{dr[0]} → {dr[1]}  ({days} 天)" if dr[0] else "-"
+    date_str = f"{dr[0]} → {dr[1]}  ({days} days)" if dr[0] else "-"
     lensless = total.get("n_lensless_files", 0)
-    lens_extra = f"  (含 {lensless} 张定焦机)" if lensless else ""
+    lens_extra = f"  ({lensless} fixed-lens)" if lensless else ""
 
     summary_rows = [
-        ("张数",         f"{total['count']}"),
-        ("文件总大小",   total.get("bytes_human", "-")),
-        ("时间跨度",     date_str),
-        ("机型种类",     f"{total.get('n_models', 0)}"),
-        ("镜头种类",     f"{total.get('n_lenses', 0)}{lens_extra}"),
+        ("Photos",       f"{total['count']}"),
+        ("Total size",   total.get("bytes_human", "-")),
+        ("Date range",   date_str),
+        ("Cameras",      f"{total.get('n_models', 0)}"),
+        ("Lenses",       f"{total.get('n_lenses', 0)}{lens_extra}"),
     ]
     if where:
-        summary_rows.insert(0, ("筛选",     where))
+        summary_rows.insert(0, ("Filter",     where))
     key_w = max(len(k) for k, _ in summary_rows)
-    summary_lines = ["总览", _HRULE]
+    summary_lines = ["Summary", _HRULE]
     for k, v in summary_rows:
         summary_lines.append(f"{k:<{key_w}}  {v}")
     sections = ["\n".join(summary_lines)]
 
     by_model = stats.get("by_model", [])
     if by_model:
-        sections.append(_section("按机型", _build_dist_rows(by_model)))
+        sections.append(_section("By camera", _build_dist_rows(by_model)))
 
     by_iso = stats.get("by_iso_bucket", [])
     if by_iso:
-        sections.append(_section("按 ISO(对数分桶)", _build_dist_rows(by_iso)))
+        sections.append(_section("By ISO (log-scale buckets)", _build_dist_rows(by_iso)))
 
     by_lens = stats.get("by_lens", [])
     if by_lens:
-        title = f"按镜头(top {lens_top})" if len(by_lens) > lens_top else "按镜头"
+        title = f"By lens (top {lens_top})" if len(by_lens) > lens_top else "By lens"
         rows = _build_dist_rows(by_lens, top=lens_top)
         sec = _section(title, rows)
         if len(by_lens) > lens_top:
-            sec += f"\n... 还有 {len(by_lens) - lens_top} 种镜头未显示 (--more / --top N / --by lens 看全)"
+            sec += f"\n... {len(by_lens) - lens_top} more lenses hidden (--more / --top N / --by lens to see all)"
         sections.append(sec)
 
     return "\n\n".join(sections)
 
 
 _DIMENSIONS = {
-    "model":    ("按机型",              "by_model"),
-    "lens":     ("按镜头",              "by_lens"),
-    "iso":      ("按 ISO",              "by_iso_bucket"),
-    "aperture": ("按光圈",              "by_aperture_bucket"),
-    "focal":    ("按焦段",              "by_focal_bucket"),
-    "hour":     ("按拍摄时段(EXIF 时间,小时)", "by_hour_bucket"),
-    "month":    ("按月份",              "by_month_bucket"),
-    "day":      ("按月份",              "by_month_bucket"),  # alias
+    "model":    ("By camera",                          "by_model"),
+    "lens":     ("By lens",                            "by_lens"),
+    "iso":      ("By ISO",                             "by_iso_bucket"),
+    "aperture": ("By aperture",                        "by_aperture_bucket"),
+    "focal":    ("By focal length",                    "by_focal_bucket"),
+    "hour":     ("By time of day (EXIF time, 3h blocks)", "by_hour_bucket"),
+    "month":    ("By month",                           "by_month_bucket"),
+    "day":      ("By month",                           "by_month_bucket"),  # alias
 }
 
 
@@ -388,5 +388,5 @@ def render_by(
         return f"no data for dimension {dimension!r}"
     n = stats.get("total", {}).get("count", 0)
     if where:
-        title = f"{title}  ·  筛: {where}  ·  {n} 张"
+        title = f"{title}  ·  filter: {where}  ·  n={n}"
     return _section(title, _build_dist_rows(items, top=top))

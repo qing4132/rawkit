@@ -111,15 +111,15 @@ def test_aperture_bucket_snaps_to_standard() -> None:
 
 def test_focal_buckets() -> None:
     records = [
-        _record(focal=14),     # <20mm 超广
-        _record(focal=50),     # 35–70mm 标准
-        _record(focal=200),    # 200–600mm 长焦 (200 inclusive in next bucket)
+        _record(focal=14),     # <20mm ultra-wide
+        _record(focal=50),     # 35-70mm standard
+        _record(focal=200),    # 200-600mm long (200 inclusive in next bucket)
     ]
     s = build_stats(records, [])
     keys = [b["key"] for b in s["by_focal_bucket"]]
-    assert "<20mm 超广" in keys
-    assert "35–70mm 标准" in keys
-    assert "200–600mm 长焦" in keys
+    assert "<20mm ultra-wide" in keys
+    assert "35-70mm standard" in keys
+    assert "200-600mm long" in keys
 
 
 def test_hour_buckets() -> None:
@@ -166,10 +166,10 @@ def test_render_default_contains_all_4_sections() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    assert "总览" in out
-    assert "按机型" in out
-    assert "按 ISO" in out
-    assert "按镜头" in out
+    assert "Summary" in out
+    assert "By camera" in out
+    assert "By ISO" in out
+    assert "By lens" in out
     # Bars are present
     assert "█" in out
 
@@ -178,7 +178,7 @@ def test_render_default_with_where_shows_caption() -> None:
     records = [_record(model="EOS R5", iso=400)]
     s = build_stats(records, [])
     out = render_default(s, where="iso>=400")
-    assert "筛选" in out
+    assert "Filter" in out
     assert "iso>=400" in out
 
 
@@ -202,8 +202,8 @@ def test_render_by_caption_when_where() -> None:
     records = [_record(iso=400)]
     s = build_stats(records, [])
     out = render_by(s, "iso", where="iso>=400")
-    assert "筛:" in out
-    assert "1 张" in out
+    assert "filter:" in out
+    assert "n=1" in out
 
 
 def test_supported_dimensions_includes_expected() -> None:
@@ -247,8 +247,8 @@ def test_cli_stats_default_4_sections(tmp_path, fake_exif) -> None:
 
     result = runner.invoke(app, ["stats", str(tmp_path)])
     assert result.exit_code == 0
-    assert "总览" in result.stdout
-    assert "按机型" in result.stdout
+    assert "Summary" in result.stdout
+    assert "By camera" in result.stdout
     assert "EOS R5" in result.stdout
     assert "X-E5" in result.stdout
 
@@ -257,9 +257,9 @@ def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(app, ["stats", str(tmp_path), "--by", "model"])
     assert result.exit_code == 0
-    assert "按机型" in result.stdout
+    assert "By camera" in result.stdout
     # default 4 sections should NOT appear
-    assert "总览" not in result.stdout
+    assert "Summary" not in result.stdout
 
 
 def test_cli_stats_unknown_dimension_exits_2(tmp_path, fake_exif) -> None:
@@ -296,5 +296,5 @@ def test_cli_stats_where_caption(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(app, ["stats", str(tmp_path), "--where", "iso>=50"])
     assert result.exit_code == 0
-    assert "筛选" in result.stdout
+    assert "Filter" in result.stdout
     assert "iso>=50" in result.stdout
