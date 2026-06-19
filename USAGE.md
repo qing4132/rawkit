@@ -503,11 +503,14 @@ broken.ARW: failed — libraw failed: <原始 libraw 报错>
 
 ## 还没做的(早晚加,加完就把示例写到这里)
 
+短期小补丁:
+
 - `rawkit preview --list` — 只列每个 RAW 内的可用档不抽
-- `rawkit render --depth 16` — 16-bit TIFF 输出
 - `rawkit ls` 文件大小列(可选)
 - `rawkit ls --limit N` / `-n N` 取前 N 条(现在靠 `\| head`)
 - `rawkit ls --columns` 选定要显示的列(默认 9 列)
+
+完整路线图(主题分组 + Top 5 个人最看好)见 [README.md "路线图——未来命令候选"](README.md#路线图未来命令候选) 一节。**那是地图不是承诺**——每条都等真实 dogfood 撞到痛点驱动。
 
 ## 大量图片时要不要“翻页”
 

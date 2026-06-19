@@ -60,16 +60,20 @@
 ### Year 1 — 命令行瑞士军刀
 ```bash
 rawkit ls *.ARW --where 'iso>3200 and lens~"50"'
-rawkit preview *.CR3 -o ./previews/
-rawkit exif get *.RAF --fields iso,lens,copyright              # 只读
+rawkit preview *.CR3 -o ./previews/ --long 2000
+rawkit render *.ARW --where 'iso<200' --max-side 4000 -o keepers/
 rawkit diff a.xmp b.xmp                                        # sidecar 之间比较
 
 # 需要 rename?用 Unix 组合即可(硬约束 #4):
 rawkit ls --json *.NEF | jq -r '"mv \(.path) \(.date)_\(.model)_\(.seq).NEF"' | sh
 ```
-> 注:原本设想的 `rawkit exif set`(往 RAW 写 metadata)被硬约束 #2 禁掉;`rawkit rename` 被硬约束 #4 砍掉。
-**替代**:exiftool(metadata)+ dcraw(渲染)+ 一半 LrC 导入前预处理。
-**用户**:写 Python 的摄影玩家。
+> 注:原本设想的几个独立子命令在做的过程中调整了:
+> - `rawkit exif`(独立子命令读 EXIF)被砍——`exiftool file` 已经够好,rawkit 重做无差异化;EXIF 数据通过 `ls --json` / `--where` 即可访问
+> - `rawkit exif set`(往 RAW 写 metadata)被硬约束 #2 禁掉
+> - `rawkit rename` 被硬约束 #4 砍掉(用 ls --json | jq | xargs mv)
+>
+> **替代**:exiftool(metadata 命令行)+ libraw via rawpy(渲染)+ 一半 LrC 导入前预处理。
+> **用户**:写 Python 的摄影玩家。
 
 ### Year 2 — Sidecar 时代(进 LrC 用户疼点)
 ```bash
@@ -142,12 +146,14 @@ rawkit.preview("photo.ARW")
 
 一句话:现在的重点不再是“把架子搭起来”,而是围绕 `ls` 做真实 dogfood,再决定 v0.1.x 的下一刀。
 
-### v0.1 拆分:先 ls+preview,再谈其他
+### 当前状态(v0.0.x 内测中)
 
-- **v0.1.0** = `ls --where` + `preview` 两个命令跑通下面验收剧本第 1 条管道
-- **v0.1.x** = 第一次真实 dogfood 后才动 `exif` / `export` / `diff`(让真痛点决定优先级,而不是现在干猜)
+- ✅ `rawkit ls`(EXIF 列表 + `--where` lark DSL + `--sort` 多键 + `--json`)
+- ✅ `rawkit preview`(抽内嵌 SOOC JPEG + `--long/--short/--mp` 三互斥 resize + EXIF Orientation 烤进像素 + `--where` 复用 ls DSL)
+- ✅ `rawkit render`(libraw demosaic + JPEG/TIFF/PNG + `--max-side` resize + `--where`)
+- 🔄 现在重心:**dogfood**——拿真实拍摄的 RAW 持续用,撞到痛就回来加;路线图见下方"未来命令候选"
 
-理由:从 0 到 1 的价值远大于从 4 到 5。`ls + preview` 是变成"你下次拍完真会用"的最短路径。
+下一刀**不预设**,等 dogfood 真痛驱动。“做哪个”候选清单见下;“什么时候做”看真实拍摄回来撞到的具体痛点。
 
 ### 验收剧本(MVP 跑通的判据)
 
@@ -169,43 +175,39 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 
 跑通 = MVP 成立;卡壳处 = v0.2 的第一批 issue。
 
-### 命令清单(v0.1 共 4 个)
+### 命令签名(当前可用,详见 [USAGE.md](USAGE.md))
+
+#### `rawkit ls`
+```
+rawkit ls [PATHS...] [-w EXPR] [-s KEY[,KEY2,...]] [-r] [-R] [--json]
+```
+默认列:`file datetime model lens focal aperture shutter bias iso`。`--json` 输出 JSONL 供 `jq` 等管道。
 
 #### `rawkit preview`
-- 签名:`rawkit preview FILES... [-o previews/] [-f]`
-- 抽**内嵌 SOOC JPEG 预览**(不解 RAW,快);缺预览时 stderr 警告并跳过
-- 默认输出 `./previews/`,文件已存在则跳过;`-f` 强制覆盖
-- 不做 resize(Unix 哲学,交给 `sips` / `magick mogrify` / `vipsthumbnail`)
-- 接受:目录(递归)/ 文件列表 / `-`(从 stdin 读路径)
-- 抽出尺寸取决于机型:Canon CR3/Sony A1/Nikon Z/Leica M11 给近似全分辨率;Sony A7R IV 只给 1616×1080;中画幅给 3000~4000 中档
-
-#### `rawkit exif`
-- 签名:`rawkit exif FILE [--json] [--fields iso,lens,fnumber]`
-- 默认人读对齐表;`--json` 给脚本;`--fields` 只输出指定字段
-- 后端:包 `exiftool` 子进程 + `-j`
-
-#### `rawkit ls` —— **MVP 心脏**
-- 签名:`rawkit ls [PATHS...] [-w EXPR] [-s KEY[,KEY2,...]] [-r] [-R] [--json]`
-- 默认输出:`file  datetime  model  lens  focal  aperture  shutter  bias  iso`(对齐表)
-- `--json` 输出 JSONL(每行一对象,便于 `jq`)
-- 默认只看顶层(同 `ls`),`-R` 才递归;自动识别主流 RAW 后缀
-- 当前未做内建“翻页/分页”,大批量查看先用 Unix 管道(`less -S` / `head` / `tail`)
-- **实现注意**:`exiftool` 必须**一次调用传所有路径**(`exiftool -j f1 f2 f3...`),不要每文件 fork 一次,否则 1000 张就要分钟级
+```
+rawkit preview [PATHS...] [-o DIR] [-R] [-f] [-w EXPR]
+                          [--long N | --short N | --mp N] [-q N]
+```
+抽内嵌 SOOC JPEG。三互斥 resize 维度、不上采样、EXIF Orientation 烤进像素。不给 resize flag = 原字节直出(毫秒级)。
 
 #### `rawkit render`
-- 签名:`rawkit render FILES... [-o renders/] [--format jpeg|tiff|png] [--quality 90] [--max-side 2048]`
-- 走 `rawpy` 全解码(libraw demosaic,**色彩科学会偏 SOOC**——与 `preview` 互补)
-- v0.1 用 rawpy 默认参数;**不暴露**白平衡/曲线(那是 LrC 的活)
-- 长边 resize 到 `--max-side`(可选)
+```
+rawkit render [PATHS...] [-o DIR] [-R] [-f] [-w EXPR]
+                         [--format jpeg|tiff|png] [-q N] [--max-side N]
+```
+libraw demosaic + Pillow 编码。默认 sRGB + 8-bit + JPEG q=90 + 4:4:4 chroma。**色彩科学会偏 SOOC**(libraw 默认管线、没 Picture Style)。
 
-### `--where` 表达式语法 v1
+render 是 rawkit 的"libraw 渲染 + 后处理"轴线。当前只暴露最基础的解码 + 缩放;调色参数(曝光/亮度/伽马)、视觉 LLM 调色、Python API 等沿这条轴线渐进式生长。
 
-**这是公开 API,一旦发布只增不删。**
+### `--where` 表达式语法现状
+
+**这是公开 API,一旦发布只增不删。**被 `ls` / `preview` / `render` 三个命令共享。
 
 字段:
-- 数值:`iso`、`fnumber`、`shutter`(秒,浮点)、`focal`(mm)
-- 字符串:`lens`、`model`、`maker`
-- 时间:`date`(YYYY-MM-DD)、`time`(HH:MM)
+- 数值:`iso`、`fnumber`、`shutter`(秒,浮点)、`focal`(mm)、`bias`(EV)、`rating`(0-5)
+- 字符串:`lens`、`model`、`maker`、`orientation`("portrait"/"landscape")
+- 时间:`datetime`、`date`(YYYY-MM-DD)、`time`(HH:MM[:SS[.NNN]])
+- 布尔:`gps`(是否含坐标)、`flash`(是否闪了闪光灯)
 
 操作:
 - 比较:`>` `<` `>=` `<=` `==` `!=`
@@ -216,6 +218,7 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 - `iso>3200 and lens~"50"`
 - `(focal>=70 and focal<=200) or lens~"70-200"`
 - `date>="2026-06-01" and not model~"iPhone"`
+- `orientation=="portrait" and rating>=4`
 
 **实现**:用 `lark`(约 30 行 BNF 文法 + 自带位置报错)。**禁止 `eval()`**。
 不手写递归下降——纸面 50 行,真做含错误位置/单测会膨胀到 300+ 行,是新手陷阱。
@@ -229,16 +232,16 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 - `-` 代表 stdin/stdout;`--` 之后全部当文件名
 - 路径全用 `pathlib.Path`,不写死分隔符
 
-### 施工顺序(建议)
+### 施工顺序(历史记录)
 
-1. 仓库骨架:`uv init` → `pyproject.toml` + `src/rawkit/` + `tests/` + `console_scripts=rawkit`;`uv add rawpy typer rich lark` 加依赖
-2. `src/rawkit/output.py`:table/json 双轨打印 + TTY 检测;日志统一到 stderr
-3. `rawkit exif`(最简单,先打通 exiftool 链路与 `--json` 输出契约)
-4. `rawkit ls`(不带 where 的最小版,默认对齐表,**批量调 exiftool**)
-5. `src/rawkit/query.py`:`lark` 实现 `--where` v1 + 单测覆盖全部语法
-6. `rawkit preview`(stdin `-` / `-f` / stderr 警告)
-7. `rawkit render`(rawpy 全解码 + resize)
-8. **Dogfood**:跑一次验收剧本,记 issue → v0.2
+全部完成:
+1. ✅ 仓库骨架 + uv + typer + lark + rawpy + Pillow
+2. ✅ EXIF 后端 + JSONL/表格双轨输出
+3. ✅ `rawkit ls`(带 `--where` + `--sort` 多键 + `--json`)
+4. ✅ `--where` lark DSL + 100% 语法单测
+5. ✅ `rawkit preview`(包含 resize / Orientation 烤像素 / `--where`)
+6. ✅ `rawkit render`(libraw + Pillow + format/max-side/`--where`)
+7. **现在**:dogfood + 路线图驱动 v0.1.x
 
 ---
 
@@ -262,6 +265,103 @@ rawkit ls ~/Pictures/2026-06-17/ --json \
 | macOS Core Image v9 | **v0.2+ 作为可选后端** `--engine apple` | macOS 27 引入 ANE 加速;v0.1 不动跨平台路径 |
 | 配置文件 | **v0.1 不做** | 等第三次喊"这个默认值烦死了"再加 |
 | Web UI | **v0.3 才做** `rawkit serve` | 别让 UI 反过来污染 CLI 心脏的简洁 |
+
+---
+
+## 路线图——未来命令候选
+
+> ⚠️ 这一节是**地图,不是承诺**。每条都按"价值密度 × 当下可做"评过,但**何时做、做不做、用什么签名,等真实 dogfood 撞到痛再决定**。
+>
+> 排除已实现的 `ls` / `preview` / `render`。
+
+### A · 利用现有 EXIF 做更多事(最便宜)
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit stat` | 汇总统计:N 张/总大小/按机型/按镜头/按 ISO 直方图——LrC 给不了的命令行年度回顾视图 |
+| `rawkit dupes` | 按 `datetime + 亚秒 + 尺寸` 找重复 RAW(多机位 / 备份恢复 / 误存场景) |
+| `rawkit timeline` | 按时间分桶(天/小时)显示密度——找"那段旅行"的所有 RAW |
+| `ls` 派生字段扩展 | `lens_mount`(RF/E/Z/X/GFX/M)、`lens_class`(广/标/长/微)、`golden_hour`(EXIF 时间 + GPS 算)、`season` |
+
+### B · RAW 文件本身(中等成本)
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit verify` | 跑 libraw 解头部 + 主区,检测损坏文件——大批备份后验证刚需 |
+| `rawkit info FILE` | 单文件深度档案:EXIF + 内嵌预览档信息 + sensor 物理参数 + 镜头校正数据 |
+| `rawkit hash` | 内容哈希(仅像素区,跳过 EXIF) → sidecar,用于跨备份验证完整性 |
+
+### C · Sidecar / Metadata 写入(README Year 2,工程中等)
+
+> 硬约束 #2 允许写 sidecar,不写 RAW
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit rate FILE 0-5` | 打分到 `.xmp`,LrC 直接读 |
+| `rawkit label FILE color` | 颜色标签(红/黄/绿/蓝/紫)到 .xmp |
+| `rawkit keyword add/rm/ls` | 关键字管理到 .xmp,LrC 共享词表 |
+| `rawkit xmp diff a.xmp b.xmp` | 比较两份 sidecar 的差异 |
+| `rawkit preset extract/apply` | 从 LrC 编辑过的 .xmp 抽出 develop 设置 → JSON → 应用到一批新 RAW(**LrC 杀手锏**) |
+
+### D · 文件组织(边缘——硬约束 #4 警戒)
+
+| 命令 | 一句话价值 | 是否违反 #4 |
+|---|---|---|
+| `rawkit organize PATH --to '{date}/{model}/'` | 按 EXIF 规则 mv 到分类目录 | **不违反**(mv 不懂 EXIF,rawkit 独有能力) |
+| `rawkit dedupe --move trash/` | 找重复 + 移到回收目录 | 同上 |
+| ~~`rawkit rename`~~ | ~~按 EXIF 改文件名~~ | **违反**,已砍(用 `ls --json \| jq \| xargs mv`) |
+
+### E · 空间 / 关系视图
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit map` | 输出 GPS bbox / KML / geojson——"我这波拍在哪" |
+| `rawkit cluster --by lens \| --by trip` | 自动分组(同镜头连续拍 = 一组、时间断档 = 新行程) |
+
+### F · 跟外界交互(大工程)
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit serve` | 本地 HTTP,浏览器看缩略图墙(README Year 3)——大工程,远期 |
+| `rawkit watch DIR` | 监视目录,新 RAW 进自动 preview / 通知 |
+| `rawkit completion zsh\|bash\|fish` | shell tab 补全(typer 自带,几乎零成本) |
+
+### G · 质量 / 工具
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit doctor` | 健康自检:exiftool / rawpy / Pillow / libraw 是否到位 + 跑样张 |
+| `~/.config/rawkit.toml` | 配置文件存常用 flag profile(等"第三次喊烦"再加) |
+| `rawkit ls --output csv\|tsv` | CSV/TSV 输出,给 Excel / 数据分析友好 |
+
+### H · render 轴线扩展(已实现 render 的渐进生长)
+
+| 阶段 | 一句话价值 | 触发条件 |
+|---|---|---|
+| `render --exposure / --bright / --gamma` | rawpy native 三参数,批量统一调一档 | 用户 dogfood 撞到"这一卷需要统一压一档" |
+| `render --wb camera\|auto\|daylight\|R,G1,B,G2` | 白平衡覆盖 | "室内灯光统一矫正" |
+| `render --auto vision:gpt-4o` | LLM 视觉自动调色 | LLM 视觉模型成熟 + 工程定型 |
+| `rawkit-py` Python API | 别的 GUI / 脚本调 rawkit 出图 | 第三方有真实接入需求 |
+
+### I · AI 层(README Year 4,远)
+
+| 命令 | 一句话价值 |
+|---|---|
+| `rawkit caption` | 视觉 LLM + EXIF → 一句话图说(图书馆 / 个人归档刚需) |
+| `rawkit embed` | 视觉 embedding 写 sidecar,用于相似搜索 / 找重复 |
+| `rawkit search QUERY` | 语义搜索"日落海边"→ 命中相似图(基于 embed) |
+
+### Top 5 个人最看好(按"价值密度 × 当下可做"排)
+
+1. **`rawkit stat`** — 独有价值、半天工程、年度回顾刚需
+2. **`rawkit rate` + `keyword` + `label`** — 一组打开 sidecar 写入大门,验证 .xmp 工程能不能跑通,后续 sidecar 命令的地基
+3. **`rawkit completion`** — 几乎零成本(typer 自带)、UX 大提升
+4. **`rawkit verify`** — 备份场景刚需、libraw 已在依赖里
+5. **`rawkit organize`** — 工作流神器(按 EXIF 自动归档)、不违反硬约束
+
+### 最大潜力但远期
+
+**`preset extract/apply`**——从 LrC 编辑过的 .xmp 抽 develop 设置 → 复用到一批新 RAW。这是 LrC 用户群里**没人能做、做出来就有用户**的杀手锏功能,但工程量大、要研究 LrC XMP develop 设置格式。**Year 2 的明星**。
 
 ---
 
