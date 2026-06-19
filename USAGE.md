@@ -172,9 +172,19 @@ rawkit stats samples/ --by camera,lens     # 两段顺序输出
 | 类型      | 字段                                          |
 | --------- | --------------------------------------------- |
 | 数值      | `iso` · `fnumber`(= `aperture`)· `shutter`(秒)· `focal`(mm)· `bias`(EV)· `rating`(0–5)· `gps_lat` · `gps_lon` |
+| 整数桶    | `hour`(0–23)· `year`· `month`(1–12)· `day`(1–31) |
 | 字符串    | `lens` · `model` · `maker` · `orientation`(`portrait` / `landscape`) |
 | 时间      | `datetime` · `date`(YYYY-MM-DD)· `time`(HH:MM[:SS[.NNN]]) |
 | 布尔      | `gps`(是否有坐标)· `flash`(闪没闪) |
+
+### 桶字段比较语义(钉死)
+
+`hour` / `year` / `month` / `day` 是**整数桶 ID**,比较即桶号比较:
+
+- `hour > 6` ≡ `hour >= 7`,意思是"7 点桶或之后",**6:30 不在内**。
+- `month == 11` 选"任意年的 11 月",跟 `--by month`(YYYY-MM 历时桶)是不同的语义,两者配合可以写出"我历年 11 月的密度对比":`stats --by month -w 'month==11'`。
+- 想做"6:00:00 这个时刻之后"用 `time > "06:00:00"`,跟整数桶不重叠。
+- `>` / `>=` 在整数桶上自然重合(SQL `WHERE month > 6` 也是这个意思),不是 bug。
 
 ### 操作
 
@@ -200,6 +210,8 @@ ls -w '(focal>=70 and focal<=200) or lens~"70-200"'
 ls -w 'date>="2024-06-01" and not model~"iPhone"'
 ls -w 'orientation=="portrait" and rating>=4'
 ls -w 'aperture>=1.4'                       # f/1.4 或更大光圈
+ls -w 'hour>=18 and hour<=22'               # 傍晚到夜间
+ls -w 'month==11 and year>=2023'            # 2023 起每年的 11 月
 ```
 
 ---

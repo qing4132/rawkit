@@ -209,12 +209,9 @@ def build_stats(
     focal_min, focal_max     = _extent("focal")
     shutter_min, shutter_max = _extent("shutter")
 
-    # Hours extracted from the `time` field (HH:MM[:SS]). Stored as a
-    # sorted list of distinct hours so the renderer can collapse runs
-    # of consecutive hours into ranges (e.g. 02–04, 22–23) instead of
-    # silently swallowing midday gaps with a single min–max.
-    hours = [int(r["time"][:2]) for r in records if isinstance(r.get("time"), str) and len(r["time"]) >= 2]
-    hours_present = sorted(set(hours))
+    # Distinct hours present (sorted). exif._normalize already derives
+    # `hour` per record, so we just collect — no string slicing here.
+    hours_present = sorted({r["hour"] for r in records if isinstance(r.get("hour"), int)})
 
     models = [r["model"] for r in records if r.get("model")]
     lenses = [r["lens"] for r in records if r.get("lens")]

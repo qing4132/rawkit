@@ -14,6 +14,7 @@ R_SONY = {
     "datetime": "2024-03-15 12:34:56",
     "date":     "2024-03-15",
     "time":     "12:34:56",
+    "year": 2024, "month": 3, "day": 15, "hour": 12,
     "maker": "SONY",
     "model": "ILCE-7M4",
     "lens": "FE 50mm F1.4 GM",
@@ -28,6 +29,7 @@ R_CANON = {
     "datetime": "2022-05-13 16:38:09",
     "date":     "2022-05-13",
     "time":     "16:38:09",
+    "year": 2022, "month": 5, "day": 13, "hour": 16,
     "maker": "Canon",
     "model": "Canon EOS R5",
     "lens": "RF800mm F11 IS STM",
@@ -42,6 +44,7 @@ R_RICOH_NO_LENS = {  # fixed-lens compact, LensModel absent
     "datetime": "2022-11-07 23:15:15",
     "date":     "2022-11-07",
     "time":     "23:15:15",
+    "year": 2022, "month": 11, "day": 7, "hour": 23,
     "maker": "RICOH",
     "model": "RICOH GR III",
     "iso": 500,
@@ -426,3 +429,41 @@ def test_keepers_query() -> None:
     drop = {**R_RATED4, "orientation": "portrait", "flash": False}
     assert pred(keeper) is True
     assert pred(drop) is False
+
+
+# --- integer bucket fields: hour / year / month / day ---------------------
+# These are derived in exif._normalize from the existing date / time strings
+# so that --by FOO and --where FOO share the same vocabulary. They are
+# COMPARED AS INTEGERS, NOT TIME CUTOFFS:
+#   `hour > 6` ≡ `hour >= 7`   (the 7-or-later hour bucket; 6:30 is NOT in)
+# For "after 06:00:00" use `time > "06:00:00"`.
+
+def test_where_hour_filters_evening() -> None:
+    """hour>=18 keeps Ricoh (23:15) but excludes Sony (12:34) and Canon (16:38)."""
+    assert _filter("hour>=18") == [R_RICOH_NO_LENS]
+
+
+def test_where_hour_strict_gt_equals_gte_plus_one() -> None:
+    """`hour > 16` ≡ `hour >= 17`. Canon at 16:38 has hour bucket 16, so excluded
+    by `hour > 16`. The minute portion is irrelevant — bucket-level comparison."""
+    assert _filter("hour>16") == [R_RICOH_NO_LENS]   # only 23
+    assert _filter("hour>=16") == [R_CANON, R_RICOH_NO_LENS]  # 16 + 23
+
+
+def test_where_year_filters() -> None:
+    """year==2022 keeps Canon and Ricoh (both in 2022), excludes Sony (2024)."""
+    assert _filter("year==2022") == [R_CANON, R_RICOH_NO_LENS]
+    assert _filter("year>=2024") == [R_SONY]
+
+
+def test_where_month_filters_calendar_month() -> None:
+    """month==11 keeps any November photo regardless of year. Ricoh (2022-11)
+    matches; Sony (2024-03) and Canon (2022-05) don't."""
+    assert _filter("month==11") == [R_RICOH_NO_LENS]
+    assert _filter("month<5") == [R_SONY]   # only March (3)
+
+
+def test_where_day_filters_calendar_day() -> None:
+    """day == DD-of-month, regardless of year/month. Sony (15) matches `day>=15`."""
+    assert _filter("day>=15") == [R_SONY]    # 15 only
+    assert _filter("day<15") == [R_CANON, R_RICOH_NO_LENS]   # 13 and 7

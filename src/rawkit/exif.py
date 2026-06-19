@@ -139,6 +139,25 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
         out["date"] = normalized[:10]
         out["time"] = normalized[11:19] + suffix
 
+    # Derived integer bucket fields. These are independent of the
+    # datetime/date/time strings and let --where DSL do bucket-by-bucket
+    # comparisons (`hour>=18`, `month==11`, `year>=2024`). Semantics:
+    # they are integer bucket IDs, not time cutoffs — `hour > 6` ≡
+    # `hour >= 7`, NOT "after 06:00:00". Use `time > "06:00:00"` for
+    # the cutoff form.
+    if isinstance(out.get("date"), str) and len(out["date"]) >= 10:
+        try:
+            out["year"]  = int(out["date"][0:4])
+            out["month"] = int(out["date"][5:7])
+            out["day"]   = int(out["date"][8:10])
+        except ValueError:
+            pass
+    if isinstance(out.get("time"), str) and len(out["time"]) >= 2:
+        try:
+            out["hour"] = int(out["time"][0:2])
+        except ValueError:
+            pass
+
     # Aperture fallback: if EXIF:FNumber wasn't written (Leica M11M and
     # similar minimalist DNGs only write APEX ApertureValue), reconstruct
     # f-number from APEX.  N = 2^(av/2).  av=2 → f/2; av=4 → f/4.

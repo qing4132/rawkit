@@ -51,6 +51,7 @@ FIELD: "iso"|"fnumber"|"aperture"|"shutter"|"focal"|"bias"|"rating"
      | "gps_lat"|"gps_lon"
      | "lens"|"model"|"maker"|"orientation"
      | "datetime"|"date"|"time"
+     | "hour"|"year"|"month"|"day"
      | "gps"|"flash"
 CMP:   ">=" | "<=" | "==" | "!=" | ">" | "<"
 
@@ -76,6 +77,10 @@ BOOL:     "true" | "false"
 _NUMERIC_FIELDS: frozenset[str] = frozenset({
     "iso", "fnumber", "aperture", "shutter", "focal",
     "bias", "rating", "gps_lat", "gps_lon",
+    # Integer bucket IDs derived from date/time. Compared as numbers,
+    # so `hour > 6` ≡ `hour >= 7` ("in the 7-or-later bucket"), NOT
+    # "after 06:00:00" — use `time > "06:00:00"` for cutoff semantics.
+    "hour", "year", "month", "day",
 })
 _STRING_FIELDS:  frozenset[str] = frozenset({"lens", "model", "maker", "orientation"})
 _DATETIME_FIELDS: frozenset[str] = frozenset({"datetime"})

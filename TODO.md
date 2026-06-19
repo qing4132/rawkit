@@ -47,18 +47,13 @@ rawkit organize ~/Pictures/卡里乱七八糟 -o ~/Pictures/sorted --by date
 
 ---
 
-## P1 · `--by` ↔ `--where` 字段对称性
+## ~~P1 · `--by` ↔ `--where` 字段对称性~~ ✅ 已完成(2026-06-19)
 
-**问题**:`--by` 支持 `hour` / `year` / `month` / `day` 四个时间派生维度,`--where` DSL **没有对应字段**——只能绕道写 `where time>"18:00:00"` 或 `where date>="2024-01-01" and date<"2025-01-01"`。
-
-**修法**:DSL 加 4 个整数字段 `hour`(0-23)/ `year` / `month`(1-12)/ `day`(1-31),从 `time` / `date` 派生。
-- `query.py` grammar:`FIELD` 加 4 个 token
-- `_NUMERIC_FIELDS` 加这 4 个
-- `exif._normalize` 里把 4 个值预先存进 record
-- 4 个对应单元测试
-- USAGE DSL 字段表更新
-
-**预算**:约 1 小时。
+实现:`hour` / `year` / `month` / `day` 4 个整数派生字段:
+- `exif._normalize` 从 `date` / `time` 切片出来,存进 record
+- `query.py` grammar + `_NUMERIC_FIELDS` 加 4 个
+- `stats.py` 改读 record 上的 `hour` 字段(替代原本字符串切片)
+- 4 个 where DSL 单元测试
 
 ### 语义钉死(写进 USAGE)
 
@@ -66,6 +61,8 @@ rawkit organize ~/Pictures/卡里乱七八糟 -o ~/Pictures/sorted --by date
 > - `hour > 6` ≡ `hour >= 7`,意思是"在 7 点桶或之后的桶",6:30 不在内。
 > - 想做"6:00:00 这个时刻之后"请用 `time > "06:00:00"`。
 > - `>` 与 `>=` 在整数桶上自然重合(SQL `WHERE month > 6` 同义),不是 bug。
+> - `--where month==11` 跟 `--by month`(YYYY-MM 历时桶)语义不同但能配合:
+>   `stats --by month -w 'month==11'` = 历年 11 月密度对比。
 
 ---
 
