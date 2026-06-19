@@ -69,8 +69,21 @@ def _read_jpeg_size(data: bytes) -> tuple[int, int]:
     return 0, 0
 
 
-def extract_preview(path: Path) -> PreviewResult:
+def extract_preview(
+    path: Path,
+    *,
+    long_edge: int | None = None,
+    short_edge: int | None = None,
+    megapixels: float | None = None,
+    quality: int = 90,
+) -> PreviewResult:
     """Extract the largest embedded SOOC JPEG. Raises PreviewExtractError on failure.
+
+    When any of `long_edge` / `short_edge` / `megapixels` is set, the JPEG is
+    decoded, LANCZOS-downscaled to the requested upper bound, and re-encoded
+    at `quality` (default 90). This is **a second JPEG roundtrip** — slight
+    quality loss vs the raw embedded bytes. Without any resize parameter the
+    embedded JPEG bytes are returned verbatim (no decode, no re-encode).
 
     Failure modes:
       - rawpy not installed (shouldn't happen — it's a hard dependency)
@@ -103,4 +116,45 @@ def extract_preview(path: Path) -> PreviewResult:
     w, h = _read_jpeg_size(thumb.data)
     if w == 0 or h == 0:
         raise PreviewExtractError("could not parse JPEG dimensions")
-    return PreviewResult(thumb.data, w, h)
+
+    # Fast path: no resize requested → hand back the embedded bytes verbatim.
+    if long_edge is None and short_edge is None and megapixels is None:
+        return PreviewResult(thumb.data, w, h)
+
+    # Resize path: decode → LANCZOS → re-encode.
+    try:
+        from PIL import Image
+    except ImportError as e:
+        raise PreviewExtractError(
+            f"Pillow is required for --long/--short/--mp resizing: {e}"
+        ) from e
+
+    from rawkit._resize import resize_pil
+
+    import io
+    try:
+        img = Image.open(io.BytesIO(thumb.data))
+        img.load()  # force decode now so format errors fail here, not later
+    except Exception as e:
+        raise PreviewExtractError(f"decoding embedded JPEG failed: {e}") from e
+
+    try:
+        resized = resize_pil(
+            img,
+            long_edge=long_edge,
+            short_edge=short_edge,
+            megapixels=megapixels,
+        )
+    except ValueError as e:  # >1 resize dimension set
+        raise PreviewExtractError(str(e)) from e
+
+    if resized is img:
+        # Image was already small enough → original bytes are still valid.
+        return PreviewResult(thumb.data, w, h)
+
+    out = io.BytesIO()
+    # subsampling=0 (4:4:4) keeps colour fidelity on the second encode; the
+    # tiny extra bytes are worth it when the user explicitly asked for resize.
+    resized.save(out, format="JPEG", quality=int(quality), subsampling=0, optimize=True)
+    new_w, new_h = resized.size
+    return PreviewResult(out.getvalue(), new_w, new_h)

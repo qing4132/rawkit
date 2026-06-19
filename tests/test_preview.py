@@ -124,10 +124,10 @@ def test_read_jpeg_size_rejects_non_jpeg() -> None:
 @pytest.fixture
 def fake_extract(monkeypatch):
     """Stub extract_preview so the CLI test doesn't touch real RAW files."""
-    calls: list[Path] = []
+    calls: list[dict] = []
 
-    def fake(path):
-        calls.append(path)
+    def fake(path, **kwargs):
+        calls.append({"path": path, **kwargs})
         return PreviewResult(b"\xff\xd8FAKE", 1616, 1080)
 
     monkeypatch.setattr("rawkit.cli.extract_preview", fake)
@@ -174,7 +174,7 @@ def test_preview_overwrites_with_f(tmp_path, fake_extract) -> None:
 def test_preview_reports_failure_and_exits_nonzero(tmp_path, monkeypatch) -> None:
     (tmp_path / "broken.ARW").write_bytes(b"")
 
-    def fail(path):
+    def fail(path, **_):
         raise PreviewExtractError("libraw failed: bogus header")
 
     monkeypatch.setattr("rawkit.cli.extract_preview", fail)
@@ -192,3 +192,116 @@ def test_preview_empty_directory(tmp_path, fake_extract) -> None:
     assert result.exit_code == 0
     # Output directory is NOT created when there's nothing to extract.
     assert not out.exists()
+
+
+# --- resize (--long / --short / --mp) --------------------------------------
+
+def _make_real_jpeg(w: int, h: int) -> bytes:
+    """Build an actual valid JPEG of the requested size (solid grey).
+    Needed because the resize path calls Image.open(), which won't accept
+    our handcrafted SOF-only fixtures."""
+    import io as _io
+    from PIL import Image
+    img = Image.new("RGB", (w, h), (128, 128, 128))
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
+def test_extract_long_edge_downscales(monkeypatch) -> None:
+    jpeg = _make_real_jpeg(4000, 3000)
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+    r = extract_preview(Path("fake.cr3"), long_edge=1000)
+    assert (r.width, r.height) == (1000, 750)
+    assert r.data[:3] == b"\xff\xd8\xff"
+
+
+def test_extract_short_edge_downscales(monkeypatch) -> None:
+    jpeg = _make_real_jpeg(3000, 4000)  # portrait
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+    r = extract_preview(Path("fake.cr3"), short_edge=1080)
+    # short side 3000 → 1080, ratio 0.36 → 1080 x 1440
+    assert (r.width, r.height) == (1080, 1440)
+
+
+def test_extract_megapixels_downscales(monkeypatch) -> None:
+    jpeg = _make_real_jpeg(4000, 3000)  # 12 MP
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+    r = extract_preview(Path("fake.cr3"), megapixels=3.0)
+    # 3 MP target → ratio = sqrt(3/12) = 0.5 → 2000x1500 = 3 MP
+    assert (r.width, r.height) == (2000, 1500)
+
+
+def test_extract_skips_resize_when_already_small(monkeypatch) -> None:
+    jpeg = _make_real_jpeg(800, 600)
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+    r = extract_preview(Path("fake.cr3"), long_edge=2000)
+    # No upscale; bytes returned verbatim (the original embedded JPEG).
+    assert (r.width, r.height) == (800, 600)
+    assert r.data == jpeg
+
+
+def test_extract_rejects_multiple_resize_dimensions(monkeypatch) -> None:
+    jpeg = _make_real_jpeg(1000, 800)
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+    with pytest.raises(PreviewExtractError, match="at most one"):
+        extract_preview(Path("fake.cr3"), long_edge=500, short_edge=400)
+
+
+def test_extract_no_resize_returns_original_bytes(monkeypatch) -> None:
+    """Fast path: when no resize is set, hand back the embedded bytes verbatim
+    (no decode, no re-encode — preserves the camera's original JPEG)."""
+    jpeg = _make_real_jpeg(1616, 1080)
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+    r = extract_preview(Path("fake.arw"))
+    assert r.data is jpeg or r.data == jpeg
+
+
+def test_cli_preview_long_flag(tmp_path, fake_extract) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["preview", str(tmp_path), "-o", str(out), "--long", "2000"])
+    assert result.exit_code == 0
+    assert fake_extract[0]["long_edge"] == 2000
+    assert fake_extract[0]["short_edge"] is None
+    assert fake_extract[0]["megapixels"] is None
+
+
+def test_cli_preview_short_flag(tmp_path, fake_extract) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["preview", str(tmp_path), "-o", str(out), "--short", "1080"])
+    assert result.exit_code == 0
+    assert fake_extract[0]["short_edge"] == 1080
+
+
+def test_cli_preview_mp_flag(tmp_path, fake_extract) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["preview", str(tmp_path), "-o", str(out), "--mp", "6"])
+    assert result.exit_code == 0
+    assert fake_extract[0]["megapixels"] == 6.0
+
+
+def test_cli_preview_rejects_multiple_resize_flags(tmp_path, fake_extract) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, [
+        "preview", str(tmp_path), "-o", str(out),
+        "--long", "2000", "--short", "1080",
+    ])
+    assert result.exit_code == 2  # usage error
+    assert "mutually exclusive" in result.stderr
+    assert not fake_extract
+
+
+def test_cli_preview_default_no_resize(tmp_path, fake_extract) -> None:
+    """No flags → all resize args are None (fast embedded-bytes path)."""
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["preview", str(tmp_path), "-o", str(out)])
+    assert result.exit_code == 0
+    assert fake_extract[0]["long_edge"] is None
+    assert fake_extract[0]["short_edge"] is None
+    assert fake_extract[0]["megapixels"] is None
+    assert fake_extract[0]["quality"] == 90

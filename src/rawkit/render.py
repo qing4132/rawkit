@@ -68,23 +68,6 @@ def _to_pil(rgb):
     return Image.fromarray(rgb)
 
 
-def _resize_to_max_side(img, max_side: int):
-    """Downscale so the long side is `max_side`. Returns `img` unchanged
-    when no resize is needed."""
-    from PIL import Image
-
-    w, h = img.size
-    long_side = max(w, h)
-    if long_side <= max_side:
-        return img
-
-    ratio = max_side / long_side
-    new_w = max(1, round(w * ratio))
-    new_h = max(1, round(h * ratio))
-    # LANCZOS is the right call for one-shot downscales of photographic content.
-    return img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-
 def render(
     path: Path,
     *,
@@ -127,7 +110,8 @@ def render(
 
     img = _to_pil(rgb)
     if max_side:
-        img = _resize_to_max_side(img, max_side)
+        from rawkit._resize import resize_pil
+        img = resize_pil(img, long_edge=max_side)
 
     buf = io.BytesIO()
     pil_format, _suffix = _FORMATS[output_format]

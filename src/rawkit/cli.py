@@ -551,6 +551,38 @@ def preview(
         help="Output directory. Created if missing. Each preview is written as "
              "<DIR>/<basename>.jpg (basename = source stem).",
     ),
+    long_edge: int = typer.Option(
+        0,
+        "--long",
+        metavar="N",
+        help="Downscale so the LONG edge is at most N pixels (LANCZOS). "
+             "Triggers a JPEG decode+re-encode (slight quality loss). "
+             "Mutually exclusive with --short / --mp.",
+    ),
+    short_edge: int = typer.Option(
+        0,
+        "--short",
+        metavar="N",
+        help="Downscale so the SHORT edge is at most N pixels. Useful for "
+             "social-media sizing (Instagram = 1080 short). "
+             "Mutually exclusive with --long / --mp.",
+    ),
+    megapixels: float = typer.Option(
+        0.0,
+        "--mp",
+        metavar="N",
+        help="Downscale so total pixels ≤ N million. e.g. --mp 12 ≈ 12-megapixel "
+             "output. Mutually exclusive with --long / --short.",
+    ),
+    quality: int = typer.Option(
+        90,
+        "--quality",
+        "-q",
+        min=1,
+        max=100,
+        help="JPEG quality (1-100) for the re-encoded output. Only consulted "
+             "when one of --long/--short/--mp is set.",
+    ),
     recursive: bool = typer.Option(
         False,
         "--recursive",
@@ -574,15 +606,41 @@ def preview(
 
     The 160x120-class navigation thumbnail is intentionally not used.
 
+    \b
+    Three mutually-exclusive resize options (when set, the embedded JPEG
+    is decoded and LANCZOS-downscaled before re-encoding at --quality):
+      --long N    — long edge ≤ N px
+      --short N   — short edge ≤ N px (social-media sizing)
+      --mp N      — total pixels ≤ N million
+
+    Images already smaller than the target are written unchanged
+    (no upscaling).
+
     Progress and per-file outcomes are reported on stderr; stdout is left
     empty so you can pipe `find … | xargs rawkit preview` without surprises.
     """
+    # Validate the mutually-exclusive resize options upfront, before doing
+    # any I/O — typer-level rejection so the user gets a usage error (exit 2).
+    set_dims = [
+        name for name, val in (("--long", long_edge), ("--short", short_edge), ("--mp", megapixels))
+        if val
+    ]
+    if len(set_dims) > 1:
+        raise typer.BadParameter(
+            f"{' / '.join(set_dims)} are mutually exclusive — pick one"
+        )
+
     inputs = paths if paths else [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
         return
 
     output.mkdir(parents=True, exist_ok=True)
+
+    # Convert "0 means unset" CLI defaults to the None the extractor expects.
+    long_arg: int | None = long_edge if long_edge > 0 else None
+    short_arg: int | None = short_edge if short_edge > 0 else None
+    mp_arg: float | None = megapixels if megapixels > 0 else None
 
     n_ok = 0
     n_skipped = 0
@@ -596,7 +654,13 @@ def preview(
             n_skipped += 1
             continue
         try:
-            result = extract_preview(raw)
+            result = extract_preview(
+                raw,
+                long_edge=long_arg,
+                short_edge=short_arg,
+                megapixels=mp_arg,
+                quality=quality,
+            )
         except PreviewExtractError as e:
             typer.echo(f"{raw.name}: failed — {e}", err=True)
             n_failed += 1

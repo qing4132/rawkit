@@ -253,12 +253,49 @@ rawkit ls samples/ --where 'iso > and 5'
 
 ```
 rawkit preview [PATHS...] [-o/--output DIR] [-R/--recursive] [-f/--overwrite]
+                           [--long N | --short N | --mp N] [-q/--quality N]
 ```
 
 - `PATHS`:零个或多个**目录或 RAW 文件**。无参数 = 当前目录。默认只看顶层(同 `ls`)。
 - `--output, -o DIR`:输出目录,默认 `./previews/`,不存在自动创建。输出文件名 = `<DIR>/<源文件 stem>.jpg`。
 - `--recursive, -R`:递归进子目录(默认 OFF)。
 - `--overwrite, -f`:覆盖已存在的输出。**默认 skip 并警告**(反复跑不会重复抽)。
+- **缩放(三选一,互斥)**——下面单独讲。
+- `--quality, -q N`:JPEG 质量 1-100,默认 90。**仅当**指定缩放时生效(原 SOOC 字节直出时不重新编码)。
+
+### 缩放:`--long` / `--short` / `--mp`
+
+不指定 → **抽出原始 SOOC 字节直接写盘**(零损耗、毫秒级)。
+
+指定**其中一个** → JPEG 解码 + LANCZOS 缩放 + 重新编码:
+
+| flag | 含义 | 典型用例 |
+|---|---|---|
+| `--long N` | 长边降到最多 N 像素 | LrC export 风格,通用尺寸控制 |
+| `--short N` | 短边降到最多 N 像素 | 社媒尺寸(Instagram 短边 1080) |
+| `--mp N` | 总像素降到最多 N 百万 | "我要 4MP 不管什么比例" |
+
+```bash
+# Canon R5 嵌的 8192×5464 SOOC JPEG → 2000×1334
+rawkit preview *.CR3 --long 2000
+
+# Sony A1 横图 8640×5760 → 1620×1080(社媒)
+rawkit preview *.ARW --short 1080
+
+# Ricoh GR III DNG 6000×4000=24MP → 2449×1633=4MP
+rawkit preview *.DNG --mp 4
+```
+
+**永不放大**:图本来比目标小就直接抽原字节(Sony A7R IV 嵌的 1616 用 `--long 2000` 不会变 2000)。
+
+**二次 JPEG 损失**:启用缩放 = 解码 + 缩 + 重新编码,**有微量画质损失**。默认 quality 90 + chroma 4:4:4 已经把损失压到肉眼难辨。不要在意 = 不指定缩放参数。
+
+**三个 flag 互斥**——同时给两个/三个会用法错误退出 2:
+
+```
+$ rawkit preview foo.CR3 --long 2000 --short 1080
+Invalid value: --long / --short are mutually exclusive — pick one
+```
 
 ### 退出码
 - `0` 全部成功 或 全部 skip
@@ -434,7 +471,6 @@ broken.ARW: failed — libraw failed: <原始 libraw 报错>
 
 ## 还没做的(早晚加,加完就把示例写到这里)
 
-- `rawkit preview --max-side N` — 按尺寸过滤想要的档(目前默认就抽最大,无 size 控制)
 - `rawkit preview --list` — 只列每个 RAW 内的可用档不抽
 - `rawkit render --depth 16` — 16-bit TIFF 输出
 - `rawkit ls` 文件大小列(可选)
