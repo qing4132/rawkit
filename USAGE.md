@@ -628,6 +628,68 @@ rawkit stats samples/ --json
 
 ---
 
+## 速查矩阵
+
+### 命令 × 选项
+
+| 命令 | `-w/--where` | `-s/--sort` | `--by` |
+|---|---|---|---|
+| `ls` | ✓ | ✓ | — |
+| `preview` | ✓ | — | — |
+| `render` | ✓ | — | — |
+| `stats` | ✓ | — | ✓ |
+
+`--where` DSL 是 4 个命令**共享同一份**(`rawkit.query.compile_where`)。
+
+### 字段 × 命令场景
+
+| 字段 | `--where` | `ls --sort` | `stats --by` | 类型/备注 |
+|---|---|---|---|---|
+| `iso` | ✓ | ✓ | ✓(对数桶) | 数值 |
+| `aperture` | ✓ | ✓(反向:asc=小光圈先) | ✓ **规范名**(f/22→f/1) | 摄影方向 |
+| `fnumber` | ✓ alias | ✓ alias | ✓ alias(f/1→f/22) | EXIF 数值方向、aperture 镜像 |
+| `shutter` | ✓ | ✓ | — | 数值(秒);连续值不分桶 |
+| `focal` | ✓ | ✓ | ✓(6 焦段类) | mm |
+| `bias` | ✓ | ✓ | — | EV;连续值 |
+| `rating` | ✓ | — | — | 0–5 |
+| `lens` | ✓ | ✓ | ✓ | 字符串子串 |
+| `model` | ✓ | ✓ | ✓ | 字符串(已去 maker 前缀) |
+| `maker` | ✓ | — | ✓ | 字符串 |
+| `orientation` | ✓ | — | ✓ | `"portrait"` / `"landscape"` |
+| `datetime` | ✓ | ✓ | — | 完整时间戳 |
+| `date` | ✓ | ✓ | `--by month`(粗化) | YYYY-MM-DD |
+| `time` | ✓ | ✓ | `--by hour`(粗化) | HH:MM:SS |
+| `gps` | ✓(bool) | — | — | `==true` / `==false` |
+| `flash` | ✓(bool) | — | — | 同上 |
+| `file` | — | ✓ | — | 文件名(仅 ls 表格有意义) |
+
+### `aperture` vs `fnumber` 双向对照
+
+`aperture` 和 `fnumber` **数据同源**(都是 EXIF FNumber),但**比较/排序/显示方向相反**。互为镜像。
+
+| 我想表达 | 用 `aperture` 写法 | 等价 `fnumber` 写法 |
+|---|---|---|
+| 筛大光圈 ≥ f/2.8(f/2.8 f/2 f/1.4 …) | `--where 'aperture>=2.8'` | `--where 'fnumber<=2.8'` |
+| 筛小光圈 ≤ f/8(f/8 f/11 f/16 …) | `--where 'aperture<=8'` | `--where 'fnumber>=8'` |
+| 恰好 f/4 | `aperture==4` | `fnumber==4` |
+| 不等于 f/11 | `aperture!=11` | `fnumber!=11` |
+| 列表按光圈从大到小排(最大在前) | `--sort aperture -r` | `--sort fnumber` |
+| 列表按光圈从小到大排(最小在前) | `--sort aperture` | `--sort fnumber -r` |
+| 分布图按摄影方向(小光圈先) | `--by aperture` | — |
+| 分布图按 EXIF 数值(f/1 先) | — | `--by fnumber` |
+
+### `--where` 操作符
+
+| 类别 | 操作符 | 例 |
+|---|---|---|
+| 数值比较 | `>` `<` `>=` `<=` `==` `!=` | `iso>3200` |
+| 字符串子串(大小写不敏感) | `~"sub"` | `lens~"50mm"` |
+| 布尔 | `==true` / `==false` / `!=` | `flash==true` |
+| 时间 | 同数值(按 canonicalized 串比较) | `time>="18:00"` |
+| 逻辑 | `and` `or` `not` `()` | `iso>=3200 and lens~"50"` |
+
+---
+
 ## 还没做的(早晚加,加完就把示例写到这里)
 
 短期小补丁:
