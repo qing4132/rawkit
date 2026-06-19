@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import textwrap
 from enum import Enum
@@ -343,10 +344,29 @@ def _render_table(
         _LENS_COL_SOFT_CAP,
     )
 
-    use_color = _color_enabled()
+    # When stdout is a TTY, expand the lens column to fill the terminal
+    # (if there's room). This way the user can widen the terminal and the
+    # wrapped lens cell collapses back to one line. When piping, give it
+    # the full natural width so the consumer sees the whole value.
     n_cols = len(_TABLE_COLUMNS)
-    aligns = [a for _h, _k, a in _TABLE_COLUMNS]
     sep = "  "
+    sep_total = len(sep) * (n_cols - 1)
+    other_total = sum(w for i, w in enumerate(widths) if i != lens_col_idx)
+    natural_lens = max(
+        len(headers[lens_col_idx]),
+        max((len(row[lens_col_idx]) for row in rows), default=0),
+    )
+    if sys.stdout.isatty():
+        term_w = shutil.get_terminal_size((120, 24)).columns
+        widths[lens_col_idx] = max(
+            _LENS_COL_SOFT_CAP,
+            min(natural_lens, term_w - other_total - sep_total),
+        )
+    else:
+        widths[lens_col_idx] = natural_lens
+
+    use_color = _color_enabled()
+    aligns = [a for _h, _k, a in _TABLE_COLUMNS]
 
     def fmt_cell(text: str, width: int, align: str) -> str:
         return f"{text:>{width}}" if align == "r" else f"{text:<{width}}"
