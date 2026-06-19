@@ -242,14 +242,18 @@ def test_render_by_fnumber_works() -> None:
     assert "By f-number" in out
 
 
-def test_render_by_aperture_alias_matches_fnumber() -> None:
-    """`--by aperture` must produce the same view as `--by fnumber` — they're
-    aliases. Photographer-friendly word, but the canonical field is fnumber
-    because using 'aperture' as the primary name would invert the natural
-    numeric comparison semantics (f/1.4 > f/4 'aperture-wise' but 1.4 < 4)."""
-    records = [_record(fnumber=2.8), _record(fnumber=4.0)]
+def test_render_by_aperture_is_reversed_fnumber() -> None:
+    """aperture is the photographer's-direction view of fnumber: same bucket
+    data, opposite display order. f-number ascending → f/1 first, f/22 last;
+    aperture ascending → f/22 first, f/1 last (small aperture → large)."""
+    records = [_record(fnumber=2.8), _record(fnumber=4.0), _record(fnumber=11.0)]
     s = build_stats(records, [])
-    assert render_by(s, "aperture") == render_by(s, "fnumber")
+    fn_lines = render_by(s, "fnumber").splitlines()
+    ap_lines = render_by(s, "aperture").splitlines()
+    # Skip title + hrule, keep just the data rows
+    fn_data = [l for l in fn_lines if l.startswith("f/")]
+    ap_data = [l for l in ap_lines if l.startswith("f/")]
+    assert fn_data == list(reversed(ap_data))
 
 
 # --- CLI surface ------------------------------------------------------------

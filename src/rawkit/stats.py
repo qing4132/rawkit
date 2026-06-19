@@ -362,22 +362,29 @@ def render_default(
 
 
 _DIMENSIONS = {
-    # Names match the --where DSL field names so users don't need to learn
-    # two vocabularies. 'aperture' is a deliberate alias of 'fnumber'
-    # because photographers know that word but using it as the canonical
-    # name would invert <,>= semantics (f/1.4 is a 'larger aperture' than f/4).
+    # Field names match the --where DSL. 'aperture' is the canonical
+    # photographer's-direction name (small fnumber = large aperture); 'fnumber'
+    # is the EXIF-numeric-direction alias. They produce the same bucket data
+    # but display in opposite order — aperture asc shows small holes (f/22)
+    # first, fnumber asc shows the EXIF number ascending (f/1) first.
     "model":       ("By camera",                            "by_model"),
     "lens":        ("By lens",                              "by_lens"),
     "maker":       ("By maker",                             "by_maker"),
     "orientation": ("By orientation",                       "by_orientation"),
     "iso":         ("By ISO",                               "by_iso_bucket"),
-    "fnumber":     ("By f-number",                          "by_fnumber_bucket"),
-    "aperture":    ("By f-number",                          "by_fnumber_bucket"),  # alias of fnumber
+    "aperture":    ("By aperture",                          "by_fnumber_bucket"),
+    "fnumber":     ("By f-number",                          "by_fnumber_bucket"),  # alias of aperture (different display order)
     "focal":       ("By focal length",                      "by_focal_bucket"),
     "hour":        ("By time of day (EXIF time, 3h blocks)", "by_hour_bucket"),
     "month":       ("By month",                             "by_month_bucket"),
     "day":         ("By month",                             "by_month_bucket"),  # alias of month
 }
+
+
+# Dimensions whose bucket list should be reversed for display (photographer
+# direction). Currently just 'aperture': we want f/22 first, f/1 last when
+# the user thinks 'aperture ascending'.
+_REVERSE_FOR_DISPLAY: frozenset[str] = frozenset({"aperture"})
 
 
 def supported_dimensions() -> list[str]:
@@ -402,6 +409,8 @@ def render_by(
     items = stats.get(key, [])
     if not items:
         return f"no data for dimension {dimension!r}"
+    if dimension in _REVERSE_FOR_DISPLAY:
+        items = list(reversed(items))
     n = stats.get("total", {}).get("count", 0)
     if where:
         title = f"{title}  ·  filter: {where}  ·  n={n}"

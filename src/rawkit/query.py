@@ -47,7 +47,7 @@ _GRAMMAR = r"""
 comparison: FIELD CMP value
 match:      FIELD "~" STRING
 
-FIELD: "iso"|"fnumber"|"shutter"|"focal"|"bias"|"rating"
+FIELD: "iso"|"fnumber"|"aperture"|"shutter"|"focal"|"bias"|"rating"
      | "gps_lat"|"gps_lon"
      | "lens"|"model"|"maker"|"orientation"
      | "datetime"|"date"|"time"
@@ -74,7 +74,7 @@ BOOL:     "true" | "false"
 
 
 _NUMERIC_FIELDS: frozenset[str] = frozenset({
-    "iso", "fnumber", "shutter", "focal",
+    "iso", "fnumber", "aperture", "shutter", "focal",
     "bias", "rating", "gps_lat", "gps_lon",
 })
 _STRING_FIELDS:  frozenset[str] = frozenset({"lens", "model", "maker", "orientation"})
@@ -176,6 +176,23 @@ class _Builder(Transformer):
     def comparison(self, field: Token, cmp: Token, value) -> Predicate:
         field_name = str(field)
         op = str(cmp)
+
+        # 'aperture' is a first-class photographer's field: a larger aperture
+        # corresponds to a SMALLER f-number (f/1.4 is wider open than f/4).
+        # We rewrite 'aperture OP X' into 'fnumber OP' X' where OP' is the
+        # numerically-flipped operator, then evaluate against the record's
+        # `fnumber` field. So 'aperture>=2.8' means 'wider than or equal to
+        # f/2.8' = fnumber<=2.8 = f/2.8, f/2, f/1.4, ...
+        #
+        # Why a magic field instead of just documenting 'use fnumber':
+        # every RAW photographer thinks in aperture stops, not in EXIF
+        # FNumber values. Forcing them to invert <,>= in their head every
+        # time they write a filter is a tax we'd be charging for our own
+        # consistency convenience.
+        if field_name == "aperture":
+            field_name = "fnumber"
+            op = {">": "<", "<": ">", ">=": "<=", "<=": ">="}.get(op, op)
+
         op_fn = _cmp_op(op)
         kind, literal = value
 

@@ -114,7 +114,7 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 | 字段 | 类型 | 来源 |
 |---|---|---|
 | `iso` | 数值 | EXIF ISO |
-| `fnumber` | 数值 | 光圈,如 2.8 |
+| `fnumber` / `aperture` | 数值 | 光圈。**`aperture` 是规范名,按摄影圈"光圈大小"语义比较——`aperture>=2.8` 筛 f/2.8 及更大光圈(f/2 f/1.4 ...)**。`fnumber` 是反向 alias,按 EXIF FNumber 数值比较——`fnumber>=2.8` 筛 f/2.8 及更小光圈(f/4 f/5.6 f/8 ...)。 |
 | `shutter` | 数值(秒) | 曝光时间,如 0.004 = 1/250 |
 | `focal` | 数值(mm) | **实际拍摄焦段**(变焦头会随每张变) |
 | `bias` | 数值(EV) | 曝光补偿, +/- |
@@ -152,7 +152,7 @@ rawkit ls ~/Pictures/2024 --json | jq -r 'select(.iso > 3200) | .path'
 rawkit ls samples/ --where 'iso>=1000'
 
 # 大光圈
-rawkit ls samples/ --where 'fnumber<2.0'
+rawkit ls samples/ --where 'aperture>=2.0'
 
 # 长曝(≥1 秒)
 rawkit ls samples/ --where 'shutter>=1'
@@ -176,7 +176,7 @@ rawkit ls ~/Pictures --where 'not model~"iphone"'
 rawkit ls ~/Pictures --where 'date>="2024-10-01" and date<"2024-11-01"'
 
 # 复杂组合
-rawkit ls ~/Pictures --where '(iso>=3200 and fnumber<2.8) or shutter>=1' --json | jq '.path'
+rawkit ls ~/Pictures --where '(iso>=3200 and aperture>=2.8) or shutter>=1' --json | jq '.path'
 
 # 只要竖构图(粗选时最常用)
 rawkit ls ~/Pictures --where 'orientation=="portrait"'
@@ -271,7 +271,7 @@ rawkit preview [PATHS...] [-o/--output DIR] [-R/--recursive] [-f/--overwrite]
 
 ```bash
 # 2023 年后、f/4 拍的那些,造 2000px 预览
-rawkit preview samples/ --where 'date>="2023-01-01" and fnumber==4' --long 2000 -o web/
+rawkit preview samples/ --where 'date>="2023-01-01" and aperture==4' --long 2000 -o web/
 
 # A7R IV 拍的高 ISO那批,走默认(原字节直出)
 rawkit preview /shoot -R --where 'model~"7RM4" and iso>=3200' -o picks/
@@ -514,7 +514,7 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 
 - `PATHS`:同 ls/preview/render
 - `--where, -w EXPR`:复用 lark DSL(`ls --where` 同款)
-- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `maker` / `orientation` / `iso` / `fnumber` (别名:`aperture`) / `focal` / `hour` / `month`。**字段名跟 `--where` DSL 完全对齐**——`fnumber>=2.8` 跟 `--by fnumber` 指的是同一件事。
+- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `maker` / `orientation` / `iso` / `aperture` (别名:`fnumber`,反向显示) / `focal` / `hour` / `month`。**字段名跟 `--where` DSL 完全对齐**——`aperture>=2.8` 跟 `--by aperture` 指的是同一件事。
 - `--top N`:默认视图中"按镜头" top N(默认 5),`--by` 模式忽略
 - `--more`:默认视图中显示全部镜头(覆盖 `--top`)
 - `--recursive, -R`:递归
@@ -567,12 +567,23 @@ rawkit stats samples/ --by month     # 按月份(年度回顾)
 rawkit stats samples/ --by hour      # 按 EXIF 拍摄时段(3 小时桶)
 rawkit stats samples/ --by maker     # 按厂商(Sony / Canon / Fuji / ...)
 rawkit stats samples/ --by orientation  # 横图 vs 竖图
-rawkit stats samples/ --by fnumber   # 按光圈(标准档自动对齐 f/2.7 → f/2.8)
+rawkit stats samples/ --by aperture  # 按光圈大小(摄影方向,小光圈 f/22 在前 → 大光圈 f/1 在后)
+rawkit stats samples/ --by fnumber   # 按 EXIF FNumber 数值(f/1 在前 → f/22 在后)
 rawkit stats samples/ --by focal     # 按焦段类别(超广/广/标/中长/长/超长)
 rawkit stats samples/ --by lens      # 完整镜头分布,不 top 截断
 ```
 
-> **`fnumber` 而不是 `aperture` 作为规范名**:摄影圈说 "光圈" 大小跟 fnumber 数字方向**相反**(f/1.4 是 "大光圈" 但数字更小)。如果用 `aperture` 当字段名,用户写 `--where 'aperture>=2.8'` 直觉以为筛"大光圈"但其实筛到的是 fnumber≥2.8 即"小光圈"——必出错。所以规范字段名是 `fnumber`(EXIF 标准),`aperture` 仅作 `--by` 的静默别名。`--where` 一律用 `fnumber`。
+> **为什么 `aperture` 跟 `fnumber` 同时存在 且 反向**:
+>
+> 摄影圈说"光圈"总是指镜头透光孔的大小——**f/1.4 是"大光圈"但 fnumber 数字更小**。两种心智模型都是合理的,rawkit 两者都接受:
+>
+> | 你想表达 | 写法 | 同义 |
+> |---|---|---|
+> | "筛大光圈(浅景深,弱光)" | `aperture>=2.8` | `fnumber<=2.8` |
+> | "筛小光圈(深景深,风景)" | `aperture<=8` | `fnumber>=8` |
+> | "按光圈从大到小排" | `--sort aperture -r` | `--sort fnumber` |
+>
+> 规范名是 **`aperture`**——摄影圈原生语言。`fnumber` 是 EXIF 标准数值字段,比较方向跟 aperture 反。两者**数据完全同源**,仅比较/排序/显示方向镜像对称。
 
 ### 跟 `--where` 组合(子集统计)
 

@@ -91,6 +91,46 @@ def test_numeric_neq() -> None:
     assert _filter("focal!=50") == [R_CANON, R_RICOH_NO_LENS]
 
 
+# --- aperture: photographer-direction reversed fnumber ---------------------
+
+def test_aperture_gte_selects_large_apertures() -> None:
+    """'aperture>=2.8' = wider than or equal to f/2.8 (large aperture).
+    Sony has f/1.4 (wider) → matches. Ricoh has f/2.8 → matches. Canon has
+    f/11 (narrow) → excluded. The DSL rewrites this internally to
+    fnumber<=2.8 so the photographer never has to think about it."""
+    assert _filter("aperture>=2.8") == [R_SONY, R_RICOH_NO_LENS]
+
+
+def test_aperture_lte_selects_small_apertures() -> None:
+    """'aperture<=2.8' = narrower than or equal to f/2.8 (small aperture).
+    Ricoh has f/2.8 (boundary) → matches. Canon has f/11 → matches. Sony has
+    f/1.4 (too wide) → excluded."""
+    assert _filter("aperture<=2.8") == [R_CANON, R_RICOH_NO_LENS]
+
+
+def test_aperture_strictly_wider() -> None:
+    """'aperture>2.8' = strictly wider than f/2.8 → fnumber<2.8."""
+    assert _filter("aperture>2.8") == [R_SONY]
+
+
+def test_aperture_eq() -> None:
+    """'aperture==2.8' should match f/2.8 (Ricoh). Eq isn't flipped because
+    == is symmetric — the rewrite just goes through unchanged."""
+    assert _filter("aperture==2.8") == [R_RICOH_NO_LENS]
+
+
+def test_aperture_and_fnumber_are_complements() -> None:
+    """For any comparison, aperture and fnumber operators are mirror images:
+    'aperture>=N' selects exactly the same rows as 'fnumber<=N'."""
+    for expr_a, expr_f in [
+        ("aperture>=2.8", "fnumber<=2.8"),
+        ("aperture<3.5",  "fnumber>3.5"),
+        ("aperture==4.0", "fnumber==4.0"),
+        ("aperture!=11",  "fnumber!=11"),
+    ]:
+        assert _filter(expr_a) == _filter(expr_f), (expr_a, expr_f)
+
+
 # --- substring match (~) ----------------------------------------------------
 
 def test_substring_match_case_insensitive() -> None:
