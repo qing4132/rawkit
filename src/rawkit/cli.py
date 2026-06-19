@@ -136,6 +136,14 @@ def _collect_raws(inputs: Iterable[Path], recursive: bool) -> list[Path]:
 # one row. 50 chars comfortably fits any in-camera + LrC renamed scheme.
 _FILE_COL_SOFT_CAP = 50
 
+# Soft cap for the lens column. Same rationale: one pathological lens
+# name (e.g. Panasonic's "DC VARIO-SUMMILUX 1:1.7-2.8/10.9-34 ASPH.",
+# 41 chars) shouldn't widen the column for every other row. Most
+# real-world lens names — including verbose ones like
+# "Apo-Summicron-M 1:2/50 ASPH." (28) or "RF24-105mm F2.8 L IS USM Z"
+# (26) — fit under 32.
+_LENS_COL_SOFT_CAP = 32
+
 
 def _fmt_datetime(v: Any) -> str:
     """`2024-01-02 03:04:05` → `2024-01-02 03:04` (minute precision for table).
@@ -309,12 +317,24 @@ def _render_table(
         headers.append(h + arrow if h == active_header_name else h)
 
     widths = [max(len(s) for s in col) for col in zip(headers, *rows)]
-    file_names = [headers[0], *(row[0] for row in rows)]
-    normal_names = [n for n in file_names if len(n) <= _FILE_COL_SOFT_CAP]
-    if normal_names:
-        widths[0] = max(len(n) for n in normal_names)
-    else:
-        widths[0] = _FILE_COL_SOFT_CAP
+
+    def _soft_capped_width(values: list[str], cap: int) -> int:
+        """Width = widest 'normal' value; outliers (> cap) keep their own
+        cell width but don't widen the column for everyone else."""
+        normal = [v for v in values if len(v) <= cap]
+        return max(len(v) for v in normal) if normal else cap
+
+    # File column (index 0) and lens column both get the soft-cap treatment.
+    file_col_idx = 0
+    lens_col_idx = next(i for i, (_h, k, _a) in enumerate(_TABLE_COLUMNS) if k == "lens")
+    widths[file_col_idx] = _soft_capped_width(
+        [headers[file_col_idx], *(row[file_col_idx] for row in rows)],
+        _FILE_COL_SOFT_CAP,
+    )
+    widths[lens_col_idx] = _soft_capped_width(
+        [headers[lens_col_idx], *(row[lens_col_idx] for row in rows)],
+        _LENS_COL_SOFT_CAP,
+    )
 
     use_color = _color_enabled()
 
