@@ -428,6 +428,30 @@ def _sort_records(
     return sorted_have_records + misses
 
 
+def _filter_paths_by_where(raws: list[Path], where_expr: str) -> list[Path]:
+    """Filter `raws` to those whose EXIF satisfies the --where predicate.
+
+    Shared by preview/render so they can accept the same DSL as `ls`. Reads
+    EXIF for the candidate paths in ONE exiftool invocation, applies the
+    compiled predicate, and returns the surviving paths in the original
+    order. Returns `raws` unchanged when `where_expr` is empty.
+
+    Exits with code 2 (usage error) on a malformed DSL expression, matching
+    `ls --where`'s behaviour.
+    """
+    if not where_expr:
+        return raws
+    try:
+        predicate = compile_where(where_expr)
+    except QueryError as e:
+        typer.echo(f"rawkit: --where: {e}", err=True)
+        raise typer.Exit(code=2)
+    records = safe_batch_read(raws)
+    # exiftool keys records by absolute SourceFile; map by string for lookup.
+    by_path = {r["path"]: r for r in records}
+    return [r for r in raws if predicate(by_path.get(str(r), {}))]
+
+
 def _parse_sort_keys(spec: str) -> list[SortKey]:
     """Parse a comma-separated --sort value into a list of SortKey enum members.
 
@@ -595,6 +619,15 @@ def preview(
         "-f",
         help="Overwrite existing output files. Default: skip with a warning.",
     ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter inputs by an EXIF predicate (same DSL as `ls --where`). "
+             "Examples: 'iso>3200 and lens~\"50\"', 'date>=\"2024-01-01\"'. "
+             "Triggers one exiftool call to read EXIF for the candidate set.",
+    ),
 ) -> None:
     """Extract each RAW's largest embedded SOOC JPEG preview.
 
@@ -632,6 +665,9 @@ def preview(
 
     inputs = paths if paths else [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        return
+    raws = _filter_paths_by_where(raws, where)
     if not raws:
         return
 
@@ -740,6 +776,15 @@ def cmd_render(
         "-f",
         help="Overwrite existing output files. Default: skip with a warning.",
     ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter inputs by an EXIF predicate (same DSL as `ls --where`). "
+             "Examples: 'iso>3200', 'date>=\"2024-01-01\" and model~\"R5\"'. "
+             "Triggers one exiftool call to read EXIF for the candidate set.",
+    ),
 ) -> None:
     """Demosaic each RAW via libraw and encode as JPEG/TIFF/PNG.
 
@@ -763,6 +808,9 @@ def cmd_render(
     """
     inputs = paths if paths else [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        return
+    raws = _filter_paths_by_where(raws, where)
     if not raws:
         return
 

@@ -253,6 +253,7 @@ rawkit ls samples/ --where 'iso > and 5'
 
 ```
 rawkit preview [PATHS...] [-o/--output DIR] [-R/--recursive] [-f/--overwrite]
+                           [-w/--where EXPR]
                            [--long N | --short N | --mp N] [-q/--quality N]
 ```
 
@@ -260,8 +261,34 @@ rawkit preview [PATHS...] [-o/--output DIR] [-R/--recursive] [-f/--overwrite]
 - `--output, -o DIR`:输出目录,默认 `./previews/`,不存在自动创建。输出文件名 = `<DIR>/<源文件 stem>.jpg`。
 - `--recursive, -R`:递归进子目录(默认 OFF)。
 - `--overwrite, -f`:覆盖已存在的输出。**默认 skip 并警告**(反复跑不会重复抽)。
+- `--where, -w EXPR`:按 EXIF 谓词过滤候选文件(同 `ls --where` 的 DSL)。设了会多调一次 exiftool 读候选集的 EXIF。
 - **缩放(三选一,互斥)**——下面单独讲。
 - `--quality, -q N`:JPEG 质量 1-100,默认 90。**仅当**指定缩放时生效(原 SOOC 字节直出时不重新编码)。
+
+### 按 EXIF 筛选:`--where`
+
+跟 `ls --where` 一样的 DSL。只抽候选集中命中谓词的 RAW:
+
+```bash
+# 2023 年后、f/4 拍的那些,造 2000px 预览
+rawkit preview samples/ --where 'date>="2023-01-01" and fnumber==4' --long 2000 -o web/
+
+# A7R IV 拍的高 ISO那批,走默认(原字节直出)
+rawkit preview /shoot -R --where 'model~"7RM4" and iso>=3200' -o picks/
+
+# 某镜头某期间的竖拍
+rawkit preview /trip -R --where 'lens~"50mm F1.4" and orientation=="portrait"' -o p/
+```
+
+- 不加 `--where` 时不会调 exiftool(preview 快路径保持有效)
+- 语法错误 → `exit 2 + lark 风格的精准位置报错`(同 `ls --where`)
+- 0 张命中 → 干净退出(`exit 0`),不创建输出目录
+
+等价的管道写法(为复杂场景保留、互补不互斥):
+
+```bash
+rawkit ls samples/ --where '...' --json | jq -r .path | xargs rawkit preview --long 2000 -o web/
+```
 
 ### 缩放:`--long` / `--short` / `--mp`
 
@@ -407,11 +434,13 @@ broken.ARW: failed — libraw failed: <原始 libraw 报错>
 ### 签名
 
 ```
-rawkit render [PATHS...] [-o DIR] [--format jpeg|tiff|png] [-q N] [--max-side N] [-R] [-f]
+rawkit render [PATHS...] [-o DIR] [-w/--where EXPR]
+                         [--format jpeg|tiff|png] [-q N] [--max-side N] [-R] [-f]
 ```
 
 - `PATHS`:同 `preview`,目录或文件,默认当前目录
 - `--output, -o DIR`:输出目录,默认 `./renders/`
+- `--where, -w EXPR`:按 EXIF 谓词过滤候选(同 `ls --where`)。设了会多调一次 exiftool。
 - `--format`:`jpeg`(默认,有损)/ `tiff`(无损)/ `png`(无损)。文件名后缀按格式自动加(`.jpg` / `.tiff` / `.png`)
 - `--quality, -q N`:JPEG 质量 1-100,默认 90。TIFF/PNG 忽略
 - `--max-side N`:长边降到 N 像素(LANCZOS 缩放);默认 0 = 保留传感器原生分辨率
@@ -437,6 +466,9 @@ rawkit render shoot.NEF --format tiff -o archive/
 
 # 高质量 web 输出
 rawkit render *.CR3 --max-side 1920 -q 95
+
+# 按 EXIF 筛选(同 `ls --where` 的 DSL)
+rawkit render shoot/ --where 'iso>=3200 and lens~"50"' --max-side 2000 -o picks/
 ```
 
 ### 性能

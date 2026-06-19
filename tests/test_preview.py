@@ -367,3 +367,79 @@ def test_cli_preview_default_no_resize(tmp_path, fake_extract) -> None:
     assert fake_extract[0]["short_edge"] is None
     assert fake_extract[0]["megapixels"] is None
     assert fake_extract[0]["quality"] == 90
+
+
+# --- --where filter ---------------------------------------------------------
+
+@pytest.fixture
+def fake_exif_for_where(monkeypatch):
+    """Stub safe_batch_read so --where uses synthetic EXIF without exiftool."""
+
+    def fake(paths):
+        out = []
+        for p in paths:
+            name = Path(p).name
+            # Encode ISO in the test filename so per-file tests can target rows.
+            iso = 100 if "low" in name else 6400
+            out.append({"path": str(p), "iso": iso, "model": "EOS R5", "maker": "Canon"})
+        return out
+
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
+    return fake
+
+
+def test_preview_where_filters_to_matching(tmp_path, fake_extract, fake_exif_for_where) -> None:
+    (tmp_path / "low.ARW").write_bytes(b"")     # ISO 100 → won't match
+    (tmp_path / "high.ARW").write_bytes(b"")    # ISO 6400 → matches
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "preview", str(tmp_path), "-o", str(out),
+        "--where", "iso>3200",
+    ])
+    assert result.exit_code == 0
+    extracted_names = {Path(c["path"]).name for c in fake_extract}
+    assert extracted_names == {"high.ARW"}
+    assert not (out / "low.jpg").exists()
+    assert (out / "high.jpg").exists()
+
+
+def test_preview_where_zero_matches_is_clean_exit(tmp_path, fake_extract, fake_exif_for_where) -> None:
+    (tmp_path / "low.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "preview", str(tmp_path), "-o", str(out),
+        "--where", "iso>50000",
+    ])
+    assert result.exit_code == 0
+    assert not fake_extract  # no extractions attempted
+    assert not out.exists()  # output dir not even created
+
+
+def test_preview_where_bad_syntax_exits_2(tmp_path, fake_extract) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, [
+        "preview", str(tmp_path), "-o", str(out),
+        "--where", "iso >>>> not valid",
+    ])
+    assert result.exit_code == 2
+    assert "--where" in result.stderr
+    assert not fake_extract
+
+
+def test_preview_without_where_skips_exiftool(tmp_path, fake_extract, monkeypatch) -> None:
+    """No --where → safe_batch_read must NOT be called (preview stays
+    exiftool-free for the fast SOOC path)."""
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+
+    def explode(_paths):
+        raise AssertionError("safe_batch_read called without --where")
+
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", explode)
+
+    result = runner.invoke(app, ["preview", str(tmp_path), "-o", str(out)])
+    assert result.exit_code == 0
+    assert len(fake_extract) == 1

@@ -259,3 +259,64 @@ def test_cli_render_empty_directory(tmp_path, fake_render) -> None:
     result = runner.invoke(app, ["render", str(tmp_path), "-o", str(out)])
     assert result.exit_code == 0
     assert not out.exists()
+
+
+# --- --where filter ---------------------------------------------------------
+
+@pytest.fixture
+def fake_exif_for_where(monkeypatch):
+    def fake(paths):
+        return [
+            {
+                "path": str(p),
+                "iso": 100 if "low" in Path(p).name else 6400,
+                "model": "EOS R5",
+                "maker": "Canon",
+            }
+            for p in paths
+        ]
+
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
+    return fake
+
+
+def test_render_where_filters_to_matching(tmp_path, fake_render, fake_exif_for_where) -> None:
+    (tmp_path / "low.ARW").write_bytes(b"")
+    (tmp_path / "high.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "render", str(tmp_path), "-o", str(out),
+        "--where", "iso>3200",
+    ])
+    assert result.exit_code == 0
+    rendered = {Path(c["path"]).name for c in fake_render}
+    assert rendered == {"high.ARW"}
+    assert (out / "high.jpg").exists()
+    assert not (out / "low.jpg").exists()
+
+
+def test_render_where_bad_syntax_exits_2(tmp_path, fake_render) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, [
+        "render", str(tmp_path), "-o", str(out),
+        "--where", "iso === bogus",
+    ])
+    assert result.exit_code == 2
+    assert "--where" in result.stderr
+    assert not fake_render
+
+
+def test_render_without_where_skips_exiftool(tmp_path, fake_render, monkeypatch) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+
+    def explode(_paths):
+        raise AssertionError("safe_batch_read called without --where")
+
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", explode)
+
+    result = runner.invoke(app, ["render", str(tmp_path), "-o", str(out)])
+    assert result.exit_code == 0
+    assert len(fake_render) == 1
