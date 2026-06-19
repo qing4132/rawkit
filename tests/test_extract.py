@@ -498,3 +498,59 @@ def test_extract_mixed_file_and_dir_input(tmp_path, fake_extract) -> None:
     assert (out / "loose.jpg").exists()
     # dir input → mirrored subtree, rooted at the input dir
     assert (out / "sub" / "nested.jpg").exists()
+
+
+def test_extract_rejects_intra_run_basename_collision(tmp_path, fake_extract) -> None:
+    """Two file args with the same basename in different dirs would both
+    write to out/foo.jpg → silent data loss. Refuse fast (exit 1) and
+    show which sources collide."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "foo.CR3").write_bytes(b"")
+    (tmp_path / "b" / "foo.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "extract", str(tmp_path / "a" / "foo.CR3"), str(tmp_path / "b" / "foo.CR3"),
+        "-o", str(out),
+    ])
+    assert result.exit_code == 1
+    assert "collision" in result.stderr
+    # Both source paths must be mentioned so the user knows what to fix.
+    assert "/a/foo.CR3" in result.stderr
+    assert "/b/foo.CR3" in result.stderr
+    # And nothing was extracted (fail-fast, not partial).
+    assert not fake_extract
+
+
+def test_extract_rejects_intra_run_dir_collision(tmp_path, fake_extract) -> None:
+    """Two -R dir inputs whose subtrees both have foo.CR3 at the same
+    relative path also collide. Must fail-fast."""
+    (tmp_path / "trip1" / "day").mkdir(parents=True)
+    (tmp_path / "trip2" / "day").mkdir(parents=True)
+    (tmp_path / "trip1" / "day" / "x.CR3").write_bytes(b"")
+    (tmp_path / "trip2" / "day" / "x.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "extract", str(tmp_path / "trip1"), str(tmp_path / "trip2"),
+        "-R", "-o", str(out),
+    ])
+    assert result.exit_code == 1
+    assert "collision" in result.stderr
+    assert not fake_extract
+
+
+def test_extract_skip_existing_is_not_a_collision(tmp_path, fake_extract) -> None:
+    """Pre-existing files on disk from a previous run are NOT collisions —
+    they get the per-file skip-or-overwrite treatment as before. Only
+    THIS run's RAWs vying for the same output path counts."""
+    (tmp_path / "a.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "a.jpg").write_bytes(b"leftover from a previous run")
+
+    result = runner.invoke(app, ["extract", str(tmp_path), "-o", str(out)])
+    assert result.exit_code == 0
+    assert "skip" in result.stderr
+    assert "collision" not in result.stderr

@@ -777,6 +777,35 @@ def extract(
 
     output.mkdir(parents=True, exist_ok=True)
 
+    # Precompute every output path and fail-fast on intra-run collisions
+    # (two distinct RAWs in this invocation would write to the same jpg).
+    # This is different from "file already exists on disk from a previous
+    # run" — that case is handled per-file below with skip / --overwrite.
+    # An intra-run collision is silent data loss either way, so we refuse
+    # to extract anything until the user resolves it.
+    out_paths: list[Path] = [
+        (output / _output_relpath(r, inputs)).with_suffix(".jpg") for r in raws
+    ]
+    collisions: dict[Path, list[Path]] = {}
+    for raw, out_path in zip(raws, out_paths):
+        collisions.setdefault(out_path, []).append(raw)
+    duplicated = {p: srcs for p, srcs in collisions.items() if len(srcs) > 1}
+    if duplicated:
+        typer.echo(
+            f"rawkit: refusing to extract — {len(duplicated)} output collision(s):",
+            err=True,
+        )
+        for out_path, srcs in duplicated.items():
+            typer.echo(f"  {out_path}", err=True)
+            for s in srcs:
+                typer.echo(f"    \u2190 {s}", err=True)
+        typer.echo(
+            "Hint: pass the conflicting RAWs via a common parent dir with -R "
+            "so they land under distinct subdirs, or rename one source.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     # Convert "0 means unset" CLI defaults to the None the extractor expects.
     long_arg: int | None = long_edge if long_edge > 0 else None
     short_arg: int | None = short_edge if short_edge > 0 else None
@@ -785,11 +814,7 @@ def extract(
     n_ok = 0
     n_skipped = 0
     n_failed = 0
-    for raw in raws:
-        # Preserve the source-relative subdir structure in the output —
-        # otherwise IMG_0001.CR3 in two different subdirs would collide.
-        rel = _output_relpath(raw, inputs)
-        out_path = (output / rel).with_suffix(".jpg")
+    for raw, out_path in zip(raws, out_paths):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if out_path.exists() and not overwrite:
             typer.echo(
