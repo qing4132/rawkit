@@ -520,9 +520,9 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 - `--recursive, -R`:递归
 - `--json`:输出完整结构化聚合(不受 `--by`/`--top` 影响),供脚本
 
-### 默认输出(紧凑全维度概览)
+### 默认输出(Summary + Distribution 一行摘要)
 
-不加 `--by` 时,默认输出 Summary + **每个维度的紧凑列表**(无 bar、无百分号),一屏看完所有视角:
+不加 `--by` 时,默认输出 Summary + 一张 **`Distribution` 表**,每个维度**一行摘要**(无 bar、无 %):
 
 ```bash
 rawkit stats samples/
@@ -537,41 +537,24 @@ Date range  2022-04-23 → 2025-08-09  (1205 days)
 Cameras     11
 Lenses      22  (3 fixed-lens)
 
-By camera
+Distribution
 ────────────────────────────────────────────────────────
-EOS R5         11
-ILCE-7RM4A      5
-GFX100RF        1
-...
-
-By lens (top 5)
-────────────────────────────────────────────────────────
-Apo-Summicron-M 1:2/50 ASPH.  1
-...
-... 17 more lenses hidden (--more or --top N to see all)
-
-By maker
-────────────────────────────────────────────────────────
-Canon                        11
-SONY                          7
-...
-
-By orientation
-────────────────────────────────────────────────────────
-landscape  22
-portrait    3
-
-By ISO
-────────────────────────────────────────────────────────
-≤100       8
-101–200    3
-201–400    7
-...
-
-By aperture / By focal length / By hour of day / By month  (...同样紧凑列表)
+camera       EOS R5 (11), ILCE-7RM4A (5), GFX100RF (1), +8 others
+lens         Apo-Summicron-M 1:2/50 ASPH. (1), E 70-350mm F4.5-6.3 G OSS (1), FE 20-70mm F4 G (1), +19 others
+maker        Canon (11), SONY (7), FUJIFILM (2), +5 others
+orientation  landscape (22), portrait (3)
+iso          ≤100 – 3201–6400  (7 values)
+aperture     f/1 – f/11  (10 values)
+focal        <20mm ultra-wide – >600mm super-tele  (6 values)
+hour         02 – 23  (15 values)
+year         2022 – 2025  (3 values)
+month        2022-04 – 2025-08  (15 values)
+day          2022-04-23 – 2025-08-09  (21 values)
 ```
 
-紧凑模式覆盖的维度:`camera` / `lens(top 5)` / `maker` / `orientation` / `iso` / `aperture` / `focal` / `hour` / `month`(`year` / `day` 不在默认集,避免跟 month 重复)。
+两种摘要风格:
+- **enum**(camera / lens / maker / orientation):top 3 + `+N others` 尾巴。值少时全列、不加 +others。
+- **range**(iso / aperture / focal / hour / year / month / day):`first – last  (N values)`,显示有数据的桶的边界 + 数量。
 
 **想看 bar 直方图**?用 `--by`,详细模式带 bar + 百分号:
 

@@ -355,6 +355,61 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     return "\n".join(lines)
 
 
+def _inline_summary(dim_name: str, items: list[dict[str, Any]]) -> str:
+    """One-line description of a dimension's distribution. Two styles:
+
+    * RANGE: ordered-bucket dimensions (iso / aperture / focal / hour /
+      year / month / day). Show 'first – last  (N values present)'.
+    * ENUM: unordered count-ranked dimensions (camera / lens / maker /
+      orientation). Show 'top1 (n), top2 (n), top3 (n), +M others'.
+
+    Skipped entirely (returns '—') for empty items so the caller can
+    omit the line if desired.
+    """
+    if not items:
+        return "—"
+
+    _RANGE_DIMS = {"iso", "aperture", "fnumber", "focal", "hour",
+                   "year", "month", "day"}
+    if dim_name in _RANGE_DIMS:
+        first = items[0]["key"]
+        last = items[-1]["key"]
+        if first == last:
+            return f"{first}  (1 value)"
+        return f"{first} – {last}  ({len(items)} values)"
+
+    # ENUM: top 3 (count desc) + remainder
+    top_n = 3
+    parts = [f"{it['key']} ({it['count']})" for it in items[:top_n]]
+    extra = len(items) - top_n
+    if extra > 0:
+        parts.append(f"+{extra} others")
+    return ", ".join(parts)
+
+
+def _render_overview(stats: dict[str, Any]) -> str:
+    """One-line-per-dimension table. Default view when no --by is given —
+    a glance at every angle without dominating the screen."""
+    rows: list[tuple[str, str]] = []
+    for dim in _DEFAULT_OVERVIEW_DIMS:
+        if dim not in _DIMENSIONS:
+            continue
+        _title, key = _DIMENSIONS[dim]
+        items = stats.get(key, [])
+        if not items:
+            continue
+        rows.append((dim, _inline_summary(dim, items)))
+
+    if not rows:
+        return ""
+
+    key_w = max(len(k) for k, _ in rows)
+    lines = ["Distribution", _HRULE]
+    for k, v in rows:
+        lines.append(f"{k:<{key_w}}  {v}")
+    return "\n".join(lines)
+
+
 def _render_one_dim(
     stats: dict[str, Any],
     dimension: str,
@@ -367,8 +422,8 @@ def _render_one_dim(
     up); other dimensions ignore it because their buckets are bounded.
 
     `compact=True` skips the bar chart and percentage column — just
-    'key  count' rows. Used in the default 'overview of all dimensions'
-    view where bars would dominate the screen."""
+    'key  count' rows. Currently unused by the default view (which uses
+    `_render_overview` instead), kept available for API completeness."""
     if dimension not in _DIMENSIONS:
         raise ValueError(f"unknown dimension {dimension!r}; valid: {supported_dimensions()}")
     title, key = _DIMENSIONS[dimension]
@@ -397,13 +452,11 @@ def _render_one_dim(
 
 
 # The canonical dimensions shown in the default overview (no --by). Order
-# matters: this is the read order. We pick one alias per concept
-# (camera/aperture rather than model/fnumber), and one calendar grain
-# (month) — year/day are too coarse/too fine for a glance.
+# matters: this is the read order.
 _DEFAULT_OVERVIEW_DIMS: tuple[str, ...] = (
     "camera", "lens", "maker", "orientation",
     "iso", "aperture", "focal",
-    "hour", "month",
+    "hour", "year", "month", "day",
 )
 
 
@@ -414,16 +467,16 @@ def render(
     lens_top: int = 5,
     where: str = "",
 ) -> str:
-    """Render Summary + one section per dimension.
+    """Render Summary + dimensions.
 
-    When `dims` is None (the default), produce a COMPACT overview of all
-    canonical dimensions — `key  count` only, no bar charts. Designed to
-    fit on a screen and let users glance at every angle at once.
+    When `dims` is None (default), produce a one-line-per-dimension
+    distribution table — Summary + 'Distribution' section. A glance at
+    every angle without bars.
 
     When `dims` is given, produce DETAILED bar-chart sections for the
     chosen dimensions only. Multi-dim lists stack as separate sections.
 
-      render(stats)                            # compact overview, all dims
+      render(stats)                            # default: Summary + Distribution
       render(stats, dims=["month"])            # detailed bar chart
       render(stats, dims=["camera", "lens"])   # two detailed sections
     """
@@ -433,13 +486,10 @@ def render(
 
     sections = [_render_summary(stats, where)]
     if dims is None:
-        # Compact overview: every canonical dimension, no bars.
-        for dim in _DEFAULT_OVERVIEW_DIMS:
-            sec = _render_one_dim(stats, dim, top=lens_top, compact=True)
-            if sec:
-                sections.append(sec)
+        overview = _render_overview(stats)
+        if overview:
+            sections.append(overview)
     else:
-        # Detailed: chosen dims with bar charts.
         for dim in dims:
             sec = _render_one_dim(stats, dim, top=lens_top, compact=False)
             if sec:
