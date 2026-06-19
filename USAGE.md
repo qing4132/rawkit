@@ -78,7 +78,13 @@ rawkit extract [PATHS...] -o DIR [-R] [-f] [-w EXPR]
 rawkit extract ~/Pictures/2024-trip -o /tmp/peek         # 全量提取,极快
 rawkit extract . -o /tmp/peek --long 2000               # 长边 2000 px
 rawkit extract . -o /tmp/keepers -w 'rating>=4'         # 只导出 4 星以上
+rawkit extract ~/Pictures -R -o /tmp/jpegs               # 递归,镜像源目录结构
 ```
+
+> **输出路径规则**:
+> - 目录输入(`-R` 时):输出**镜像源子目录**。`~/Pictures/2024/IMG_0001.CR3` → `/tmp/jpegs/2024/IMG_0001.jpg`。不同子目录里的同名 RAW 不会撞车。
+> - 文件输入:只取 basename。`~/Pictures/2024/IMG_0001.CR3` → `/tmp/jpegs/IMG_0001.jpg`。
+> - 多个目录输入互相重叠时,**第一个匹配的目录**当作 root。
 
 > rawkit 只负责“拽出 JPEG”。后续怎么看让 Finder 、`open -a Preview`、`qlmanage`、你自己的脚本接手——这不是 rawkit 的职责。
 

@@ -443,3 +443,58 @@ def test_extract_without_where_skips_exiftool(tmp_path, fake_extract, monkeypatc
     result = runner.invoke(app, ["extract", str(tmp_path), "-o", str(out)])
     assert result.exit_code == 0
     assert len(fake_extract) == 1
+
+
+# --- output path mirrors source hierarchy ----------------------------------
+# Critical when --recursive scoops up multiple subdirs that contain
+# same-basename RAWs (common pattern: Canon shutter-count wraparound
+# producing IMG_0001.CR3 in different year/month folders).
+
+def test_extract_recursive_mirrors_subdir_structure(tmp_path, fake_extract) -> None:
+    """`-R` extracts must preserve the source subdir path under the output dir,
+    not flatten everything to one level (which would collide on dup basenames)."""
+    (tmp_path / "2024").mkdir()
+    (tmp_path / "2025").mkdir()
+    (tmp_path / "2024" / "IMG_0001.CR3").write_bytes(b"")
+    (tmp_path / "2025" / "IMG_0001.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, ["extract", str(tmp_path), "-R", "-o", str(out)])
+    assert result.exit_code == 0
+    assert (out / "2024" / "IMG_0001.jpg").exists()
+    assert (out / "2025" / "IMG_0001.jpg").exists()
+
+
+def test_extract_direct_file_arg_uses_basename(tmp_path, fake_extract) -> None:
+    """A RAW passed as a direct file arg (not via a parent dir input)
+    lands as just its basename under -o — no leading absolute path."""
+    raw = tmp_path / "weird_subdir" / "foo.ARW"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, ["extract", str(raw), "-o", str(out)])
+    assert result.exit_code == 0
+    assert (out / "foo.jpg").exists()
+    # Must NOT have written under any subdir path that mirrors source.
+    assert not (out / "weird_subdir" / "foo.jpg").exists()
+
+
+def test_extract_mixed_file_and_dir_input(tmp_path, fake_extract) -> None:
+    """A direct file gets basename; a dir input gets mirrored subtree.
+    Both modes coexist in one invocation."""
+    direct = tmp_path / "loose" / "loose.ARW"
+    direct.parent.mkdir()
+    direct.write_bytes(b"")
+    (tmp_path / "scan" / "sub").mkdir(parents=True)
+    (tmp_path / "scan" / "sub" / "nested.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app, ["extract", str(direct), str(tmp_path / "scan"), "-R", "-o", str(out)]
+    )
+    assert result.exit_code == 0
+    # direct file → basename
+    assert (out / "loose.jpg").exists()
+    # dir input → mirrored subtree, rooted at the input dir
+    assert (out / "sub" / "nested.jpg").exists()

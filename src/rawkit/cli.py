@@ -133,6 +133,34 @@ def _collect_raws(inputs: Iterable[Path], recursive: bool) -> list[Path]:
     return sorted(found)
 
 
+def _output_relpath(raw: Path, inputs: Iterable[Path]) -> Path:
+    """Map a discovered RAW back to the output-relative path that mirrors
+    its source location.
+
+    Rules:
+    - If `raw` was found by walking a directory input `inp`, return
+      `raw.relative_to(inp)` — so `samples/2024/foo.CR3` under input
+      `samples/` becomes `2024/foo.CR3`, preserving the subdir.
+    - If `raw` was passed as a direct file argument (no dir input
+      contains it), return `Path(raw.name)` — just the basename.
+    - If multiple dir inputs contain it (overlapping inputs), the
+      FIRST match wins. This is rare; users don't normally pass
+      overlapping dirs.
+
+    This is what lets `extract -R` / `render -R` (and eventually
+    `organize`) preserve folder structure in the output instead of
+    silently flattening everything into one dir — where two RAWs with
+    the same basename in different subdirs would collide.
+    """
+    for inp in inputs:
+        if inp.is_dir():
+            try:
+                return raw.relative_to(inp)
+            except ValueError:
+                continue
+    return Path(raw.name)
+
+
 # Soft cap for the file column. A pathologically long name should not
 # inflate every other row's padding — it just breaks alignment for that
 # one row. 50 chars comfortably fits any in-camera + LrC renamed scheme.
@@ -758,7 +786,11 @@ def extract(
     n_skipped = 0
     n_failed = 0
     for raw in raws:
-        out_path = output / f"{raw.stem}.jpg"
+        # Preserve the source-relative subdir structure in the output —
+        # otherwise IMG_0001.CR3 in two different subdirs would collide.
+        rel = _output_relpath(raw, inputs)
+        out_path = (output / rel).with_suffix(".jpg")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         if out_path.exists() and not overwrite:
             typer.echo(
                 f"{raw.name}: skip (exists, use -f to overwrite)", err=True
