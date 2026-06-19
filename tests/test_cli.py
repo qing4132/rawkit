@@ -430,8 +430,9 @@ def test_ls_sort_breaks_ties_by_subsecond(tmp_path, monkeypatch) -> None:
 
 
 def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
-    """A pathologically long filename must break alignment only on its own row,
-    not pad every other row's file column."""
+    """A pathologically long filename wraps within its own column;
+    the short-name row stays at its natural single-line width and
+    is never pushed wider by the outlier."""
     short = tmp_path / "short.ARW"
     long_name = tmp_path / ("really_long_" + "x" * 60 + ".ARW")  # 76+ chars
     short.write_bytes(b"")
@@ -439,17 +440,29 @@ def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
 
     result = runner.invoke(app, ["ls", str(tmp_path)])
     assert result.exit_code == 0
-    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    # Header + 2 rows
-    assert len(lines) == 3
+    lines = result.stdout.splitlines()
 
-    # Row width for the short-name row must NOT have been inflated to the
-    # long row's width. A naive implementation would pad short's filename
-    # cell to ~76 chars; ours caps at 50.
-    short_row = next(ln for ln in lines[1:] if "short.ARW" in ln)
-    long_row = next(ln for ln in lines[1:] if "really_long_" in ln)
-    assert len(short_row) < len(long_row) - 20, (
-        f"short row got inflated:\n  short={len(short_row)}\n  long ={len(long_row)}"
+    # The short row sits on exactly one physical line that contains
+    # both the filename and all of the exposure values.
+    short_rows = [ln for ln in lines if "short.ARW" in ln]
+    assert len(short_rows) == 1
+    assert "1/250" in short_rows[0]  # shutter cell on the same line
+
+    # The long filename wraps inside the file column: at least one
+    # continuation line consists of just an `xxxxx…` chunk (no other
+    # data, since other columns are blank on continuation lines).
+    xxxx_only_lines = [ln for ln in lines if ln.strip() and set(ln.strip()) <= {"x"}]
+    assert xxxx_only_lines, "expected at least one continuation line with just x's"
+
+    # Short row width must not have been inflated to match the outlier:
+    # the file column ends with "  " (column separator) soon after the
+    # short filename, not 70+ chars later (which would indicate every row
+    # got padded out to match the 76-char outlier).
+    assert short_rows[0].startswith("short.ARW")
+    first_sep = short_rows[0].find("  ")
+    assert first_sep < 20, (
+        f"file column got inflated by the long outlier: first separator at {first_sep}, "
+        f"short row: {short_rows[0]!r}"
     )
 
 

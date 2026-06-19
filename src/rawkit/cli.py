@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import textwrap
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
@@ -281,13 +282,15 @@ def _render_table(
 ) -> None:
     """Render an aligned, content-width table on stdout.
 
-    We intentionally do NOT fit-to-terminal: columns are sized to the widest
-    value so no data is ever truncated. Output may exceed the terminal width;
-    in that case `| less -S` (horizontal scroll) is the standard escape hatch.
+    Column widths follow each column's natural max value, with two
+    exceptions: the file and lens columns have a soft cap. Values that
+    exceed the cap don't widen the column for every other row —
+    instead they **wrap within their own column** and emit continuation
+    lines whose other columns are left blank (only the wrapping cell
+    has text). Normal rows still render as a single physical line.
 
-    A pathologically wide value in the file or lens column won't widen those
-    columns for every other row — they have a soft cap, see `_soft_capped_width`.
-    The outlier row itself just overflows its own column.
+    There is no overall line-width cap; we don't try to fit the table to
+    the terminal. Use `| less -S` for horizontal scroll if needed.
 
     When stdout is a TTY (and NO_COLOR isn't set) the header row is bold,
     and the active sort column gets an ASC/DESC arrow suffix. We do NOT
@@ -323,8 +326,8 @@ def _render_table(
     widths = [max(len(s) for s in col) for col in zip(headers, *rows)]
 
     def _soft_capped_width(values: list[str], cap: int) -> int:
-        """Width = widest 'normal' value; outliers (> cap) keep their own
-        cell width but don't widen the column for everyone else."""
+        """Width = widest 'normal' value; outliers (> cap) wrap inside
+        the column instead of widening it for everyone else."""
         normal = [v for v in values if len(v) <= cap]
         return max(len(v) for v in normal) if normal else cap
 
@@ -341,29 +344,47 @@ def _render_table(
     )
 
     use_color = _color_enabled()
+    n_cols = len(_TABLE_COLUMNS)
+    aligns = [a for _h, _k, a in _TABLE_COLUMNS]
+    sep = "  "
 
     def fmt_cell(text: str, width: int, align: str) -> str:
         return f"{text:>{width}}" if align == "r" else f"{text:<{width}}"
 
-    def wrap(s: str, codes: str) -> str:
+    def ansi(s: str, codes: str) -> str:
         # ANSI wrap a pre-padded cell. The codes don't change visible width;
         # terminals render them as zero-width. So padding-then-wrap is safe.
         return f"{codes}{s}{_RESET}" if use_color and codes else s
 
-    # Header line: whole row bold; active sort column carries the arrow only.
-    header_cells: list[str] = []
-    for i, h in enumerate(headers):
-        padded = fmt_cell(h, widths[i], _TABLE_COLUMNS[i][2])
-        header_cells.append(wrap(padded, _BOLD))
-    typer.echo("  ".join(header_cells), color=use_color)
-
-    # Data rows: plain text, no cell-level coloring.
-    for row in rows:
-        cells = [
-            fmt_cell(row[i], widths[i], _TABLE_COLUMNS[i][2])
-            for i in range(len(row))
+    def emit_row(cells: list[str], *, bold: bool = False) -> None:
+        # Wrap each cell into physical lines that fit its column. Cells
+        # whose content already fits stay as a single line, so normal
+        # rows still print on one line. break_long_words=True so a single
+        # huge token still fits; break_on_hyphens=False so 'RF24-105mm'
+        # doesn't split at the hyphen.
+        wrapped: list[list[str]] = [
+            textwrap.wrap(
+                cells[i],
+                width=max(widths[i], 1),
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""]
+            for i in range(n_cols)
         ]
-        typer.echo("  ".join(cells), color=use_color)
+        height = max(len(w) for w in wrapped)
+        for line_idx in range(height):
+            line_parts: list[str] = []
+            for col_idx in range(n_cols):
+                text = wrapped[col_idx][line_idx] if line_idx < len(wrapped[col_idx]) else ""
+                padded = fmt_cell(text, widths[col_idx], aligns[col_idx])
+                if bold:
+                    padded = ansi(padded, _BOLD)
+                line_parts.append(padded)
+            typer.echo(sep.join(line_parts).rstrip(), color=use_color)
+
+    emit_row(list(headers), bold=True)
+    for row in rows:
+        emit_row(list(row))
 
 
 def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
