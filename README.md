@@ -18,11 +18,11 @@
 | ----------- | -------------------------------------------- | ------ |
 | `ls`        | 表格视图,一行一文件                            | ✓      |
 | `info`      | 描述视图:单文件 = 全字段;文件夹 = 整体 summary;`--by` 钻维度 | 部分(目前还叫 `stats`,只做文件夹版) |
-| `extract`   | 把嵌入 JPEG 拽出来,扔到指定目录              | 部分(目前还叫 `preview`) |
+| `extract`   | 把嵌入 JPEG 拽出来,扔到指定目录              | ✓      |
 | `render`    | 完整 RAW 解码(libraw)写出 JPEG/TIFF       | ✓      |
 | `organize`  | 按 `--by` 把文件 move 到分层目录            | ✗      |
 
-当前实际能跑的是 `ls` / `preview` / `render` / `stats` 四个。从这些到 V1 的迁移路径在 [TODO.md](TODO.md)。具体命令用法见 [USAGE.md](USAGE.md)。
+当前实际能跑的是 `ls` / `extract` / `render` / `stats` 四个。从这些到 V1 的迁移路径在 [TODO.md](TODO.md)。具体命令用法见 [USAGE.md](USAGE.md)。
 
 ## 设计原则
 

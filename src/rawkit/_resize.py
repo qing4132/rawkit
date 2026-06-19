@@ -1,4 +1,4 @@
-"""Shared image-resize logic for preview/render commands.
+"""Shared image-resize logic for extract/render commands.
 
 We accept three independent target dimensions:
   - long_edge   : downscale so max(w, h) ≤ N
@@ -7,7 +7,7 @@ We accept three independent target dimensions:
 
 At most one may be set; the CLI layer validates this for nicer error messages.
 All targets are UPPER BOUNDS — images already smaller than the target are
-returned unchanged (we never upscale; upscaling RAW previews is meaningless).
+returned unchanged (we never upscale; upscaling RAW-embedded JPEGs is meaningless).
 """
 
 from __future__ import annotations

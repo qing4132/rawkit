@@ -1,27 +1,27 @@
 """Render a RAW to JPEG/TIFF/PNG via libraw demosaic + Pillow encode.
 
-This is the **opposite** of `preview`. Where preview hands back the SOOC JPEG
+This is the **opposite** of `extract`. Where extract hands back the SOOC JPEG
 the camera already baked in, render decodes the raw Bayer pattern ourselves
 through libraw, getting an RGB array we encode fresh.
 
-Trade-offs vs `preview`:
+Trade-offs vs `extract`:
 
-| concern         | preview                          | render                                        |
+| concern         | extract                          | render                                        |
 |-----------------|----------------------------------|-----------------------------------------------|
 | colour science  | 100% SOOC (camera's pipeline)    | libraw's neutral sRGB — **WILL drift** from SOOC |
 | speed           | ~30ms / file (just memcpy)       | ~0.5–2s / file (real demosaic)                |
 | size ceiling    | whatever the camera embedded     | the sensor's native resolution                |
-| use when…       | you trust the camera's look      | the camera didn't embed a big enough preview  |
+| use when…       | you trust the camera's look      | the camera didn't embed a big enough JPEG      |
 
 So:
 - Sony A7R IV users want render (only 1616×1080 embedded)
-- Canon R5 / Sony A1 / Leica M11 users probably want preview (full-res already SOOC)
-- Hasselblad 3FR / Fuji GFX users get a 3000-class preview from `preview`, but
+- Canon R5 / Sony A1 / Leica M11 users probably want extract (full-res already SOOC)
+- Hasselblad 3FR / Fuji GFX users get a 3000-class JPEG from `extract`, but
   if they want native 1-billion-pixel output, render is the only path
 
 We deliberately do NOT expose white-balance / curves / sharpening knobs in v1.
 Those are LrC's job; rawkit only does the "decode at all" step. If you want
-SOOC colour, use `preview`. If you want fine-grained control, use LrC/C1.
+SOOC colour, use `extract`. If you want fine-grained control, use LrC/C1.
 """
 
 from __future__ import annotations

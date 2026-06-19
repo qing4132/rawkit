@@ -1,6 +1,6 @@
 # TODO
 
-> 从当前实际状态(`ls` / `preview` / `render` / `stats` 四个命令)到 V1 目标 surface(`ls` / `info` / `extract` / `render` / `organize` 五个)之间的差距。
+> 从当前实际状态(`ls` / `extract` / `render` / `stats` 四个命令)到 V1 目标 surface(`ls` / `info` / `extract` / `render` / `organize` 五个)之间的差距。
 > 项目还在内测期,所有这些都可能再被推翻。
 
 ---
@@ -14,7 +14,7 @@
 
 ### 子命令改名
 
-- `preview` → `extract`(改名,语义不变:只提嵌入 JPEG,不管后续怎么看)
+- ~~`preview` → `extract`~~ ✅ 完成(2026-06-19) — 改名同时:默认输出目录 `./previews` → `./jpegs`;模块 `preview.py` → `extract.py`;函数 `extract_preview` → `extract_jpeg`;异常 `PreviewExtractError` → `ExtractError`。文桃1依然 `tests/test_extract.py` 覆盖。
 - `stats` → 并进 `info`(同一命令两态:`info FILE` = 全字段;`info DIR` = 整体 summary;`info DIR --by FOO` = 钻维度)
 - `render` 可能改名为 `bake` / `develop` / `export`,**未拍板**。倾向暂时不改。
 

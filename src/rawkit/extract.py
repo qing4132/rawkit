@@ -26,13 +26,13 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class PreviewResult:
+class ExtractResult:
     data: bytes
     width: int
     height: int
 
 
-class PreviewExtractError(RuntimeError):
+class ExtractError(RuntimeError):
     """LibRaw could not produce an embedded JPEG preview from this file."""
 
 
@@ -69,15 +69,15 @@ def _read_jpeg_size(data: bytes) -> tuple[int, int]:
     return 0, 0
 
 
-def extract_preview(
+def extract_jpeg(
     path: Path,
     *,
     long_edge: int | None = None,
     short_edge: int | None = None,
     megapixels: float | None = None,
     quality: int = 90,
-) -> PreviewResult:
-    """Extract the largest embedded SOOC JPEG. Raises PreviewExtractError on failure.
+) -> ExtractResult:
+    """Extract the largest embedded SOOC JPEG. Raises ExtractError on failure.
 
     When any of `long_edge` / `short_edge` / `megapixels` is set, the JPEG is
     decoded, LANCZOS-downscaled to the requested upper bound, and re-encoded
@@ -94,7 +94,7 @@ def extract_preview(
     try:
         import rawpy
     except ImportError as e:
-        raise PreviewExtractError(
+        raise ExtractError(
             "rawpy is not installed in the current environment. "
             "If you installed rawkit globally with `uv tool install`, "
             "reinstall after dependency changes:\n"
@@ -103,29 +103,29 @@ def extract_preview(
 
     try:
         with rawpy.imread(str(path)) as raw:
-            thumb = raw.extract_thumb()  # libraw API name; we expose it as "preview"
+            thumb = raw.extract_thumb()  # libraw calls it "thumb"; we expose the result as the extracted JPEG
     except Exception as e:
-        raise PreviewExtractError(f"libraw failed: {e}") from e
+        raise ExtractError(f"libraw failed: {e}") from e
 
     if getattr(thumb.format, "name", "") != "JPEG":
-        raise PreviewExtractError(
+        raise ExtractError(
             f"embedded preview is {thumb.format!r}, not JPEG "
             "(BITMAP path not yet supported)"
         )
 
     w, h = _read_jpeg_size(thumb.data)
     if w == 0 or h == 0:
-        raise PreviewExtractError("could not parse JPEG dimensions")
+        raise ExtractError("could not parse JPEG dimensions")
 
     # Fast path: no resize requested → hand back the embedded bytes verbatim.
     if long_edge is None and short_edge is None and megapixels is None:
-        return PreviewResult(thumb.data, w, h)
+        return ExtractResult(thumb.data, w, h)
 
     # Resize path: decode → LANCZOS → re-encode.
     try:
         from PIL import Image, ImageOps
     except ImportError as e:
-        raise PreviewExtractError(
+        raise ExtractError(
             f"Pillow is required for --long/--short/--mp resizing: {e}"
         ) from e
 
@@ -136,7 +136,7 @@ def extract_preview(
         img = Image.open(io.BytesIO(thumb.data))
         img.load()  # force decode now so format errors fail here, not later
     except Exception as e:
-        raise PreviewExtractError(f"decoding embedded JPEG failed: {e}") from e
+        raise ExtractError(f"decoding embedded JPEG failed: {e}") from e
 
     # Bake EXIF Orientation into the pixels themselves. Without this, our
     # re-encoded JPEG loses the rotation tag (Pillow's save() doesn't preserve
@@ -154,7 +154,7 @@ def extract_preview(
             megapixels=megapixels,
         )
     except ValueError as e:  # >1 resize dimension set
-        raise PreviewExtractError(str(e)) from e
+        raise ExtractError(str(e)) from e
 
     # NOTE: once we've decoded for the resize path we always re-encode, even
     # if the resize ended up a no-op. exif_transpose may have rotated pixels
@@ -177,4 +177,4 @@ def extract_preview(
         save_kwargs["exif"] = exif_bytes
     resized.save(out, **save_kwargs)
     new_w, new_h = resized.size
-    return PreviewResult(out.getvalue(), new_w, new_h)
+    return ExtractResult(out.getvalue(), new_w, new_h)

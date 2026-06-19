@@ -12,7 +12,7 @@ from typing import Any, Iterable
 import typer
 
 from rawkit.exif import safe_batch_read
-from rawkit.preview import PreviewExtractError, extract_preview
+from rawkit.extract import ExtractError, extract_jpeg
 from rawkit.query import QueryError, compile_where
 from rawkit.render import RenderError, render, suffix_for
 from rawkit.stats import build_stats, render, supported_dimensions
@@ -507,7 +507,7 @@ def _sort_records(
 def _filter_paths_by_where(raws: list[Path], where_expr: str) -> list[Path]:
     """Filter `raws` to those whose EXIF satisfies the --where predicate.
 
-    Shared by preview/render so they can accept the same DSL as `ls`. Reads
+    Shared by extract/render so they can accept the same DSL as `ls`. Reads
     EXIF for the candidate paths in ONE exiftool invocation, applies the
     compiled predicate, and returns the surviving paths in the original
     order. Returns `raws` unchanged when `where_expr` is empty.
@@ -634,21 +634,21 @@ def ls(
         _render_table(records, sort_keys=sort_keys, reverse=reverse)
 
 
-# --- preview command --------------------------------------------------------
+# --- extract command --------------------------------------------------------
 
 @app.command()
-def preview(
+def extract(
     paths: list[Path] = typer.Argument(
         None,
-        help="Files or directories to extract previews from. Defaults to current "
+        help="Files or directories to extract embedded JPEGs from. Defaults to current "
              "directory. Directories are listed top-level only unless -R.",
     ),
     output: Path = typer.Option(
-        Path("./previews"),
+        Path("./jpegs"),
         "--output",
         "-o",
         metavar="DIR",
-        help="Output directory. Created if missing. Each preview is written as "
+        help="Output directory. Created if missing. Each extracted JPEG is written as "
              "<DIR>/<basename>.jpg (basename = source stem).",
     ),
     long_edge: int = typer.Option(
@@ -705,13 +705,13 @@ def preview(
              "Triggers one exiftool call to read EXIF for the candidate set.",
     ),
 ) -> None:
-    """Extract each RAW's largest embedded SOOC JPEG preview.
+    """Extract each RAW's largest embedded SOOC JPEG.
 
     Always returns the camera's in-RAW JPEG (100% SOOC colour science).
     Uses libraw (via rawpy) to reach whatever the camera embedded —
     typically the full-resolution SOOC frame for Canon CR3 / Sony A1+ /
     Nikon Z…, the 3000-class reduced-resolution frame for Hasselblad 3FR,
-    or the 1080-class preview for older Sony ARW.
+    or the 1080-class JPEG for older Sony ARW.
 
     The 160x120-class navigation thumbnail is intentionally not used.
 
@@ -726,7 +726,7 @@ def preview(
     (no upscaling).
 
     Progress and per-file outcomes are reported on stderr; stdout is left
-    empty so you can pipe `find … | xargs rawkit preview` without surprises.
+    empty so you can pipe `find … | xargs rawkit extract` without surprises.
     """
     # Validate the mutually-exclusive resize options upfront, before doing
     # any I/O — typer-level rejection so the user gets a usage error (exit 2).
@@ -766,14 +766,14 @@ def preview(
             n_skipped += 1
             continue
         try:
-            result = extract_preview(
+            result = extract_jpeg(
                 raw,
                 long_edge=long_arg,
                 short_edge=short_arg,
                 megapixels=mp_arg,
                 quality=quality,
             )
-        except PreviewExtractError as e:
+        except ExtractError as e:
             typer.echo(f"{raw.name}: failed — {e}", err=True)
             n_failed += 1
             continue
@@ -864,22 +864,22 @@ def cmd_render(
 ) -> None:
     """Demosaic each RAW via libraw and encode as JPEG/TIFF/PNG.
 
-    Opposite of `preview`: where preview hands back the camera's already-baked
+    Opposite of `extract`: where extract hands back the camera's already-baked
     SOOC JPEG (fast, 100% SOOC), render decodes the raw Bayer pattern ourselves
     through libraw and encodes the result fresh.
 
     \b
     Colour science WILL drift from SOOC. libraw's defaults are a neutral
     sRGB pipeline, not Canon Picture Style / Fuji Film Simulation / etc.
-    If you need SOOC colour, use `preview`. If you need fine-grained
+    If you need SOOC colour, use `extract`. If you need fine-grained
     rendering control (WB, curves, sharpening), use Lightroom / Capture One.
 
     Render is the right tool when the camera didn't embed a big enough
-    preview (e.g. Sony A7R IV only embeds 1616x1080) or when you want a
+    JPEG (e.g. Sony A7R IV only embeds 1616x1080) or when you want a
     full-sensor-resolution output that no embedded JPEG provides.
 
     Throughput: ~0.5-2 seconds per file (real demosaic work), vs
-    preview's ~30ms per file. Don't render thousands when preview
+    extract's ~30ms per file. Don't render thousands when extract
     would do.
     """
     inputs = paths if paths else [Path(".")]

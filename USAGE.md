@@ -1,7 +1,7 @@
 # USAGE
 
 > 当前实际可用的命令。这页随代码同步更新。
-> V1 的目标 surface(`ls` / `info` / `extract` / `render` / `organize`)还没全部对齐;现在能跑的是 `ls` / `preview` / `render` / `stats`,后两者未来会改名/合并。看 [TODO.md](TODO.md)。
+> V1 的目标 surface(`ls` / `info` / `extract` / `render` / `organize`)还没全部对齐;现在能跑的是 `ls` / `extract` / `render` / `stats`,后者未来会合并进 `info`。看 [TODO.md](TODO.md)。
 
 ---
 
@@ -50,18 +50,18 @@ rawkit ls . --json | jq '.path'                         # 喂给 jq
 
 ---
 
-## `rawkit preview` (V1 会改名为 `extract`)
+## `rawkit extract`
 
 把每个 RAW 里的最大嵌入 SOOC JPEG 拽出来,写到 `-o` 指定的目录。**不做 RAW 解码**——只是文件 IO + offset 计算,所以快(100 张 RAW 通常 < 1 秒)。
 
 ```bash
-rawkit preview [PATHS...] -o DIR [-R] [-f] [-w EXPR]
+rawkit extract [PATHS...] -o DIR [-R] [-f] [-w EXPR]
                            [--long N | --short N | --mp N] [-q N]
 ```
 
 | flag                 | 含义 |
 | -------------------- | --- |
-| `-o / --output DIR`  | 输出目录 |
+| `-o / --output DIR`  | 输出目录(默认 `./jpegs`) |
 | `--long N`           | resize 让长边 = N px(LANCZOS) |
 | `--short N`          | resize 让短边 = N px |
 | `--mp N`             | resize 让像素总数 ≈ N 百万 |
@@ -75,10 +75,12 @@ rawkit preview [PATHS...] -o DIR [-R] [-f] [-w EXPR]
 例:
 
 ```bash
-rawkit preview ~/Pictures/2024-trip -o /tmp/peek         # 全量提取,极快
-rawkit preview . -o /tmp/peek --long 2000               # 长边 2000 px
-rawkit preview . -o /tmp/keepers -w 'rating>=4'         # 只导出 4 星以上
+rawkit extract ~/Pictures/2024-trip -o /tmp/peek         # 全量提取,极快
+rawkit extract . -o /tmp/peek --long 2000               # 长边 2000 px
+rawkit extract . -o /tmp/keepers -w 'rating>=4'         # 只导出 4 星以上
 ```
+
+> rawkit 只负责“拽出 JPEG”。后续怎么看让 Finder 、`open -a Preview`、`qlmanage`、你自己的脚本接手——这不是 rawkit 的职责。
 
 ---
 
