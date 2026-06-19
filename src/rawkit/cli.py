@@ -371,11 +371,11 @@ class SortKey(str, Enum):
 # Per-sort-key extractor: returns the value to compare, or None if missing.
 # Strings are lowercased so case differences don't reorder rows.
 #
-# `aperture` returns NEGATED fnumber so '--sort aperture' ascending = aperture
-# values small → large = SMALL aperture (large f-number) first → LARGE aperture
-# (small f-number) last. This matches the photographer mental model where
-# 'aperture' is the size of the hole, not its EXIF number. `fnumber` keeps
-# the raw EXIF numeric direction for users who want it.
+# aperture and fnumber sort the SAME WAY here (by fnumber numeric ascending,
+# i.e. f/1.4 → f/22). The photographer-direction inversion of aperture lives
+# only in --where (where 'aperture>=2.8' means 'wider than f/2.8'). Sort and
+# stats --by use the same canonical fnumber order to avoid maintaining two
+# directions for the same data.
 _SORT_EXTRACTORS: dict[SortKey, Any] = {
     SortKey.file:     lambda r: Path(r["path"]).name.lower() if r.get("path") else None,
     SortKey.datetime: lambda r: r.get("datetime"),
@@ -384,7 +384,7 @@ _SORT_EXTRACTORS: dict[SortKey, Any] = {
     SortKey.model:    lambda r: r["model"].lower() if r.get("model") else None,
     SortKey.lens:     lambda r: r["lens"].lower() if r.get("lens") else None,
     SortKey.focal:    lambda r: r.get("focal"),
-    SortKey.aperture: lambda r: -r["fnumber"] if r.get("fnumber") is not None else None,
+    SortKey.aperture: lambda r: r.get("fnumber"),
     SortKey.fnumber:  lambda r: r.get("fnumber"),
     SortKey.shutter:  lambda r: r.get("shutter"),
     SortKey.bias:     lambda r: r.get("bias"),

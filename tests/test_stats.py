@@ -125,14 +125,14 @@ def test_focal_buckets() -> None:
 
 def test_hour_buckets() -> None:
     records = [
-        _record(time="08:30:00"),   # 06–08
-        _record(time="16:00:00"),   # 15–17
-        _record(time="16:45:00"),   # 15–17
+        _record(time="08:30:00"),   # 08
+        _record(time="16:00:00"),   # 16
+        _record(time="16:45:00"),   # 16
     ]
     s = build_stats(records, [])
     by_hour = {b["key"]: b["count"] for b in s["by_hour_bucket"]}
-    assert by_hour.get("06–08") == 1
-    assert by_hour.get("15–17") == 2
+    assert by_hour.get("08") == 1
+    assert by_hour.get("16") == 2
 
 
 def test_month_buckets_chronological() -> None:
@@ -145,6 +145,22 @@ def test_month_buckets_chronological() -> None:
     s = build_stats(records, [])
     keys = [b["key"] for b in s["by_month_bucket"]]
     assert keys == ["2024-01", "2024-02", "2024-03"]
+
+
+def test_year_and_day_buckets_chronological() -> None:
+    """`--by date` has three coarsenings: year (YYYY), month (YYYY-MM),
+    day (YYYY-MM-DD). All sort chronologically."""
+    records = [
+        _record(date="2024-03-15"),
+        _record(date="2023-12-31"),
+        _record(date="2024-03-15"),
+        _record(date="2024-03-16"),
+    ]
+    s = build_stats(records, [])
+    years = [b["key"] for b in s["by_year_bucket"]]
+    assert years == ["2023", "2024"]
+    days = [(b["key"], b["count"]) for b in s["by_day_bucket"]]
+    assert days == [("2023-12-31", 1), ("2024-03-15", 2), ("2024-03-16", 1)]
 
 
 def test_lensless_count() -> None:
@@ -210,7 +226,8 @@ def test_render_by_caption_when_where() -> None:
 def test_supported_dimensions_includes_expected() -> None:
     dims = supported_dimensions()
     for d in ("model", "lens", "maker", "orientation",
-              "iso", "fnumber", "aperture", "focal", "hour", "month"):
+              "iso", "fnumber", "aperture", "focal",
+              "hour", "year", "month", "day"):
         assert d in dims
 
 
@@ -242,18 +259,16 @@ def test_render_by_fnumber_works() -> None:
     assert "By f-number" in out
 
 
-def test_render_by_aperture_is_reversed_fnumber() -> None:
-    """aperture is the photographer's-direction view of fnumber: same bucket
-    data, opposite display order. f-number ascending → f/1 first, f/22 last;
-    aperture ascending → f/22 first, f/1 last (small aperture → large)."""
+def test_render_by_aperture_matches_fnumber() -> None:
+    """--by aperture and --by fnumber show the SAME bucket order (small
+    f-number first, i.e. f/1.4 → f/22). The photographer-direction inversion
+    of aperture lives ONLY in --where to avoid cognitive load of having two
+    display directions for the same data."""
     records = [_record(fnumber=2.8), _record(fnumber=4.0), _record(fnumber=11.0)]
     s = build_stats(records, [])
-    fn_lines = render_by(s, "fnumber").splitlines()
-    ap_lines = render_by(s, "aperture").splitlines()
-    # Skip title + hrule, keep just the data rows
-    fn_data = [l for l in fn_lines if l.startswith("f/")]
-    ap_data = [l for l in ap_lines if l.startswith("f/")]
-    assert fn_data == list(reversed(ap_data))
+    assert render_by(s, "aperture") == render_by(s, "fnumber").replace(
+        "By f-number", "By aperture"
+    )
 
 
 # --- CLI surface ------------------------------------------------------------

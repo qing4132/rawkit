@@ -514,7 +514,7 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 
 - `PATHS`:同 ls/preview/render
 - `--where, -w EXPR`:复用 lark DSL(`ls --where` 同款)
-- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `maker` / `orientation` / `iso` / `aperture` (别名:`fnumber`,反向显示) / `focal` / `hour` / `month`。**字段名跟 `--where` DSL 完全对齐**——`aperture>=2.8` 跟 `--by aperture` 指的是同一件事。
+- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `maker` / `orientation` / `iso` / `aperture` (别名:`fnumber`,同方向显示) / `focal` / `hour` / `year` / `month` / `day`。**字段名跟 `--where` DSL 完全对齐**。
 - `--top N`:默认视图中"按镜头" top N(默认 5),`--by` 模式忽略
 - `--more`:默认视图中显示全部镜头(覆盖 `--top`)
 - `--recursive, -R`:递归
@@ -567,23 +567,28 @@ rawkit stats samples/ --by month     # 按月份(年度回顾)
 rawkit stats samples/ --by hour      # 按 EXIF 拍摄时段(3 小时桶)
 rawkit stats samples/ --by maker     # 按厂商(Sony / Canon / Fuji / ...)
 rawkit stats samples/ --by orientation  # 横图 vs 竖图
-rawkit stats samples/ --by aperture  # 按光圈大小(摄影方向,小光圈 f/22 在前 → 大光圈 f/1 在后)
-rawkit stats samples/ --by fnumber   # 按 EXIF FNumber 数值(f/1 在前 → f/22 在后)
+rawkit stats samples/ --by year     # 年度总量
+rawkit stats samples/ --by month    # YYYY-MM
+rawkit stats samples/ --by day      # 每天(YYYY-MM-DD)
+rawkit stats samples/ --by hour     # 24 个小时桶(00-23)
+rawkit stats samples/ --by aperture # 按光圈(f/1 → f/22,跟 fnumber 同方向)
+rawkit stats samples/ --by fnumber  # 同上(alias)
+rawkit stats samples/ --by lens     # 完整镜头分布,不 top 截断
 rawkit stats samples/ --by focal     # 按焦段类别(超广/广/标/中长/长/超长)
 rawkit stats samples/ --by lens      # 完整镜头分布,不 top 截断
 ```
 
-> **为什么 `aperture` 跟 `fnumber` 同时存在 且 反向**:
+> **为什么 `aperture` 跟 `fnumber` 同时存在 且 反向(仅 `--where`)**:
 >
-> 摄影圈说"光圈"总是指镜头透光孔的大小——**f/1.4 是"大光圈"但 fnumber 数字更小**。两种心智模型都是合理的,rawkit 两者都接受:
+> 摄影圈说"光圈"总是指镜头透光孔的大小——**f/1.4 是"大光圈"但 fnumber 数字更小**。rawkit 只在 `--where` 上接受这种反向语义(它在表达式里能避免用户 mental flip);在 `--sort` / `--by` 上两者完全一致、都按 fnumber 数值额、避免"同一个数据两个方向"的认知负担。
 >
 > | 你想表达 | 写法 | 同义 |
 > |---|---|---|
-> | "筛大光圈(浅景深,弱光)" | `aperture>=2.8` | `fnumber<=2.8` |
-> | "筛小光圈(深景深,风景)" | `aperture<=8` | `fnumber>=8` |
-> | "按光圈从大到小排" | `--sort aperture -r` | `--sort fnumber` |
+> | `--where` 筛大光圈(浅景深) | `aperture>=2.8` | `fnumber<=2.8` |
+> | `--where` 筛小光圈(深景深) | `aperture<=8` | `fnumber>=8` |
+> | `--sort` / `--by` | `aperture` 跟 `fnumber` 等价 | 都按 fnumber asc(f/1 在前 → f/22 在后) |
 >
-> 规范名是 **`aperture`**——摄影圈原生语言。`fnumber` 是 EXIF 标准数值字段,比较方向跟 aperture 反。两者**数据完全同源**,仅比较/排序/显示方向镜像对称。
+> 规范名是 **`aperture`**(摄影圈原生语言)。`fnumber` 是 EXIF 标准数值字段;在 `--where` 上与 aperture 镜像对称,在 `--sort`/`--by` 上等价。
 
 ### 跟 `--where` 组合(子集统计)
 
@@ -620,7 +625,8 @@ rawkit stats samples/ --json
   - ISO:每 stop 一档,8 桶(≤100 / 101–200 / ... / >6400)
   - 光圈:13 个标准档,实测光圈在 ±6% 内对齐到最近一档(f/2.7 → f/2.8)
   - 焦段:6 类(<20mm 超广 / 20–35 广 / 35–70 标 / 70–200 中长 / 200–600 长 / >600 超长)
-  - 时段:8 个 3 小时桶(00–02 / 03–05 / ... / 21–23)
+  - 时段:24 个 1 小时桶(00 / 01 / ... / 23)
+  - 日期:3 粒度(year YYYY / month YYYY-MM / day YYYY-MM-DD)
 - **TTY 检测**:非 TTY(管道、重定向)自动关颜色(同 ls)
 - **跟 ls 风格一致**:表头加粗、不染色、不用 emoji
 - **空桶不显示**:不会输出 "0 张" 的空行,默认视图保持紧凑
@@ -646,8 +652,8 @@ rawkit stats samples/ --json
 | 字段 | `--where` | `ls --sort` | `stats --by` | 类型/备注 |
 |---|---|---|---|---|
 | `iso` | ✓ | ✓ | ✓(对数桶) | 数值 |
-| `aperture` | ✓ | ✓(反向:asc=小光圈先) | ✓ **规范名**(f/22→f/1) | 摄影方向 |
-| `fnumber` | ✓ alias | ✓ alias | ✓ alias(f/1→f/22) | EXIF 数值方向、aperture 镜像 |
+| `aperture` | ✓ | ✓ | ✓ **规范名**(f/1→f/22, 跟 fnumber 同方向) | 摄影方向(仅 `--where` 反向) |
+| `fnumber` | ✓ alias | ✓ alias | ✓ alias(f/1→f/22) | EXIF 数值, 仅 `--where` 与 aperture 镜像 |
 | `shutter` | ✓ | ✓ | — | 数值(秒);连续值不分桶 |
 | `focal` | ✓ | ✓ | ✓(6 焦段类) | mm |
 | `bias` | ✓ | ✓ | — | EV;连续值 |
@@ -657,26 +663,23 @@ rawkit stats samples/ --json
 | `maker` | ✓ | — | ✓ | 字符串 |
 | `orientation` | ✓ | — | ✓ | `"portrait"` / `"landscape"` |
 | `datetime` | ✓ | ✓ | — | 完整时间戳 |
-| `date` | ✓ | ✓ | `--by month`(粗化) | YYYY-MM-DD |
-| `time` | ✓ | ✓ | `--by hour`(粗化) | HH:MM:SS |
+| `date` | ✓ | ✓ | `--by year/month/day` | YYYY-MM-DD |
+| `time` | ✓ | ✓ | `--by hour`(24 个 1 小时桶) | HH:MM:SS |
 | `gps` | ✓(bool) | — | — | `==true` / `==false` |
 | `flash` | ✓(bool) | — | — | 同上 |
 | `file` | — | ✓ | — | 文件名(仅 ls 表格有意义) |
 
 ### `aperture` vs `fnumber` 双向对照
 
-`aperture` 和 `fnumber` **数据同源**(都是 EXIF FNumber),但**比较/排序/显示方向相反**。互为镜像。
+`aperture` 和 `fnumber` 在 `--where` 上 **镜像对称**(方向相反);在 `--sort` / `--by` 上 **完全等价**(都按 fnumber asc)。
 
-| 我想表达 | 用 `aperture` 写法 | 等价 `fnumber` 写法 |
+| 场景 | 用 `aperture` 写法 | 等价 `fnumber` 写法 |
 |---|---|---|
-| 筛大光圈 ≥ f/2.8(f/2.8 f/2 f/1.4 …) | `--where 'aperture>=2.8'` | `--where 'fnumber<=2.8'` |
-| 筛小光圈 ≤ f/8(f/8 f/11 f/16 …) | `--where 'aperture<=8'` | `--where 'fnumber>=8'` |
-| 恰好 f/4 | `aperture==4` | `fnumber==4` |
-| 不等于 f/11 | `aperture!=11` | `fnumber!=11` |
-| 列表按光圈从大到小排(最大在前) | `--sort aperture -r` | `--sort fnumber` |
-| 列表按光圈从小到大排(最小在前) | `--sort aperture` | `--sort fnumber -r` |
-| 分布图按摄影方向(小光圈先) | `--by aperture` | — |
-| 分布图按 EXIF 数值(f/1 先) | — | `--by fnumber` |
+| `--where` 筛大光圈 ≥ f/2.8 | `--where 'aperture>=2.8'` | `--where 'fnumber<=2.8'` |
+| `--where` 筛小光圈 ≤ f/8 | `--where 'aperture<=8'` | `--where 'fnumber>=8'` |
+| `--where` 恰好 f/4 | `aperture==4` | `fnumber==4` |
+| `--sort` 排序 | `--sort aperture` | `--sort fnumber`(等价) |
+| `--by` 分布 | `--by aperture`(f/1→f/22) | `--by fnumber`(同上) |
 
 ### `--where` 操作符
 

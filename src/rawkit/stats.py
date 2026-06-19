@@ -60,17 +60,12 @@ _FOCAL_BUCKETS: tuple[tuple[float, float, str], ...] = (
     (600.0,   10000.0, ">600mm super-tele"),
 )
 
-# 3-hour blocks; photographers think in golden-hour / blue-hour / midday
-# bands, not single hours.
-_HOUR_BUCKETS: tuple[tuple[int, int, str], ...] = (
-    (0,  3,  "00–02"),
-    (3,  6,  "03–05"),
-    (6,  9,  "06–08"),
-    (9,  12, "09–11"),
-    (12, 15, "12–14"),
-    (15, 18, "15–17"),
-    (18, 21, "18–20"),
-    (21, 24, "21–23"),
+# 24 hourly buckets, one per clock hour. We previously had 3-hour bands
+# (00–02, 03–05, ...) but the ranges were unclear (does '00–02' mean
+# inclusive? does 03 belong to 03–05 or 00–02?). One-hour buckets are
+# self-explanatory; large outputs are the user's choice to make.
+_HOUR_BUCKETS: tuple[tuple[int, int, str], ...] = tuple(
+    (h, h + 1, f"{h:02d}") for h in range(24)
 )
 
 
@@ -132,6 +127,18 @@ def _month_bucket(date_str: str | None) -> str | None:
     if not isinstance(date_str, str) or len(date_str) < 7:
         return None
     return date_str[:7]  # 'YYYY-MM'
+
+
+def _year_bucket(date_str: str | None) -> str | None:
+    if not isinstance(date_str, str) or len(date_str) < 4:
+        return None
+    return date_str[:4]  # 'YYYY'
+
+
+def _day_bucket(date_str: str | None) -> str | None:
+    if not isinstance(date_str, str) or len(date_str) < 10:
+        return None
+    return date_str[:10]  # 'YYYY-MM-DD'
 
 
 # --- main aggregation ------------------------------------------------------
@@ -228,6 +235,14 @@ def build_stats(
         "by_hour_bucket": _bucketed(list(_HOUR_BUCKETS), lambda r: _hour_bucket(r.get("time"))),
         "by_month_bucket": _ranked_chrono(
             [_month_bucket(r.get("date")) for r in records],
+            n,
+        ),
+        "by_year_bucket": _ranked_chrono(
+            [_year_bucket(r.get("date")) for r in records],
+            n,
+        ),
+        "by_day_bucket": _ranked_chrono(
+            [_day_bucket(r.get("date")) for r in records],
             n,
         ),
     }
@@ -362,29 +377,32 @@ def render_default(
 
 
 _DIMENSIONS = {
-    # Field names match the --where DSL. 'aperture' is the canonical
-    # photographer's-direction name (small fnumber = large aperture); 'fnumber'
-    # is the EXIF-numeric-direction alias. They produce the same bucket data
-    # but display in opposite order — aperture asc shows small holes (f/22)
-    # first, fnumber asc shows the EXIF number ascending (f/1) first.
+    # Field names match the --where DSL. 'aperture' and 'fnumber' show
+    # identical bucket order here (small-fnumber/large-aperture first) —
+    # the photographer-direction inversion lives only in --where where it
+    # earns its keep (so 'aperture>=2.8' reads naturally as 'wider than
+    # or equal to f/2.8'). In display / sort, having TWO directions for
+    # the same data is confusing without payoff, so we settle on one.
     "model":       ("By camera",                            "by_model"),
     "lens":        ("By lens",                              "by_lens"),
     "maker":       ("By maker",                             "by_maker"),
     "orientation": ("By orientation",                       "by_orientation"),
     "iso":         ("By ISO",                               "by_iso_bucket"),
     "aperture":    ("By aperture",                          "by_fnumber_bucket"),
-    "fnumber":     ("By f-number",                          "by_fnumber_bucket"),  # alias of aperture (different display order)
+    "fnumber":     ("By f-number",                          "by_fnumber_bucket"),  # alias of aperture, same direction
     "focal":       ("By focal length",                      "by_focal_bucket"),
-    "hour":        ("By time of day (EXIF time, 3h blocks)", "by_hour_bucket"),
+    "hour":        ("By hour of day",                       "by_hour_bucket"),
+    "year":        ("By year",                              "by_year_bucket"),
     "month":       ("By month",                             "by_month_bucket"),
-    "day":         ("By month",                             "by_month_bucket"),  # alias of month
+    "day":         ("By day",                               "by_day_bucket"),
 }
 
 
-# Dimensions whose bucket list should be reversed for display (photographer
-# direction). Currently just 'aperture': we want f/22 first, f/1 last when
-# the user thinks 'aperture ascending'.
-_REVERSE_FOR_DISPLAY: frozenset[str] = frozenset({"aperture"})
+# Set of dimensions whose bucket list should be reversed before render.
+# Currently empty: aperture / fnumber share the same display order to
+# avoid "two ways to look at the same number" cognitive load. Inversion
+# survives only in --where where it carries its weight.
+_REVERSE_FOR_DISPLAY: frozenset[str] = frozenset()
 
 
 def supported_dimensions() -> list[str]:
