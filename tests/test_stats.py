@@ -295,8 +295,9 @@ def test_render_default_is_one_line_distribution() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    # Single Summary block
-    assert "Summary" in out
+    # No header / hrule
+    assert "Summary" not in out
+    assert "──────" not in out
     # No separate Distribution section
     assert "Distribution" not in out
     # NOT the detailed section titles
@@ -306,12 +307,15 @@ def test_render_default_is_one_line_distribution() -> None:
     # No bars or percentages in default view
     assert "█" not in out
     assert "%" not in out
-    # Date range carries year/month/day distinct counts
+    # Date range carries independent year/month/day distinct counts
     assert "year" in out
     assert "month" in out
     assert "day" in out
-    # Enum dim shown inline
-    assert "EOS R5" in out
+    # Cameras / Lenses are bare counts (no top-3 expansion in this row)
+    assert "EOS R5" not in out
+    assert "RF50" not in out
+    # Makers row is gone
+    assert "Makers" not in out
     # Numeric extents shown
     assert "ISO" in out
     assert "100 – 3200" in out
@@ -379,6 +383,7 @@ def test_summary_shutter_range_uses_photographer_format() -> None:
 
 
 def test_summary_camera_top_3_plus_others() -> None:
+    """Cameras row shows only the bare distinct count, no top-3 expansion."""
     records = [
         _record(model="EOS R5"),
         _record(model="EOS R5"),
@@ -390,9 +395,9 @@ def test_summary_camera_top_3_plus_others() -> None:
     ]
     s = build_stats(records, [])
     out = render_default(s)
-    # 5 distinct cameras: top 3 by count + 2 others
-    assert "EOS R5 (3)" in out
-    assert "+2 others" in out
+    assert "Cameras      5" in out
+    assert "EOS R5" not in out
+    assert "others" not in out
 
 
 def test_summary_orientation_lists_both_when_only_two() -> None:
@@ -413,8 +418,8 @@ def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(app, ["stats", str(tmp_path), "--by", "model"])
     assert result.exit_code == 0
-    # Summary always shows; default 'By month' is replaced by the chosen dim
-    assert "Summary" in result.stdout
+    # Overview block always shows (Photos row); chosen dim adds a By section
+    assert "Photos" in result.stdout
     assert "By camera" in result.stdout
     assert "By month" not in result.stdout
 

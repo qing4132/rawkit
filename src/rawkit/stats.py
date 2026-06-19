@@ -174,9 +174,11 @@ def build_stats(
             pass
 
     # Distinct year / month / day counts (values where photos exist).
-    n_years  = len({d[:4]  for d in dates}) if dates else 0
-    n_months = len({d[:7]  for d in dates}) if dates else 0
-    n_days   = len({d[:10] for d in dates}) if dates else 0
+    # Three independent calendar dimensions: distinct YYYY, distinct
+    # calendar month (1–12), distinct calendar day-of-month (1–31).
+    n_years  = len({d[:4]   for d in dates}) if dates else 0
+    n_months = len({d[5:7]  for d in dates}) if dates else 0
+    n_days   = len({d[8:10] for d in dates}) if dates else 0
 
     # Numeric extents (real values, not bucket names).
     def _extent(field: str) -> tuple[Any, Any]:
@@ -415,9 +417,10 @@ def _enum_inline(items: list[dict[str, Any]], n_distinct: int) -> str:
 
 
 def _render_summary(stats: dict[str, Any], where: str) -> str:
-    """Single Summary block — totals, date range with year/month/day
-    distinct counts, top-3 enum dims, and min–max ranges for numeric dims.
-    No subsections, no histograms; the whole overview is here."""
+    """Single consolidated overview block — totals, date range with
+    independent year/month/day distinct counts, count-only for camera/
+    lens, top-3 enums, and min\u2013max ranges for numeric dims. No header,
+    no horizontal rule; just the rows."""
     total = stats.get("total", {})
     if total.get("count", 0) == 0:
         return "no records"
@@ -428,42 +431,23 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     n_days   = total.get("n_days",   0)
     if dr[0]:
         date_str = (
-            f"{dr[0]} → {dr[1]}  "
+            f"{dr[0]} \u2192 {dr[1]}  "
             f"({n_years} year{'s' if n_years != 1 else ''}, "
             f"{n_months} month{'s' if n_months != 1 else ''}, "
             f"{n_days} day{'s' if n_days != 1 else ''})"
         )
     else:
-        date_str = "—"
+        date_str = "\u2014"
 
-    lensless = total.get("n_lensless_files", 0)
-    lens_extra = f"  ({lensless} fixed-lens)" if lensless else ""
-
-    # Per-dimension inline summaries
-    by_model       = stats.get("by_model", [])
-    by_lens        = stats.get("by_lens", [])
-    by_maker       = stats.get("by_maker", [])
     by_orientation = stats.get("by_orientation", [])
-
-    cam_line = f"{total.get('n_models', 0)}: {_enum_inline(by_model, total.get('n_models', 0))}" \
-               if by_model else f"{total.get('n_models', 0)}"
-    lens_line = (
-        f"{total.get('n_lenses', 0)}{lens_extra}: "
-        f"{_enum_inline(by_lens, total.get('n_lenses', 0))}"
-        if by_lens else f"{total.get('n_lenses', 0)}{lens_extra}"
-    )
-    maker_line = (
-        f"{total.get('n_makers', 0)}: {_enum_inline(by_maker, total.get('n_makers', 0))}"
-        if by_maker else f"{total.get('n_makers', 0)}"
-    )
-    orient_line = _enum_inline(by_orientation, len(by_orientation)) if by_orientation else "—"
+    orient_line = _enum_inline(by_orientation, len(by_orientation)) if by_orientation else "\u2014"
 
     def _range(lo, hi, fmt) -> str:
         if lo is None:
-            return "—"
+            return "\u2014"
         if lo == hi:
             return fmt(lo)
-        return f"{fmt(lo)} – {fmt(hi)}"
+        return f"{fmt(lo)} \u2013 {fmt(hi)}"
 
     iso_line     = _range(total.get("iso_min"),     total.get("iso_max"),     _fmt_iso)
     aperture_line= _range(total.get("fnumber_min"), total.get("fnumber_max"), _fmt_aperture)
@@ -477,9 +461,8 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     rows.append(("Photos",       f"{total['count']}"))
     rows.append(("Total size",   total.get("bytes_human", "-")))
     rows.append(("Date range",   date_str))
-    rows.append(("Cameras",      cam_line))
-    rows.append(("Lenses",       lens_line))
-    rows.append(("Makers",       maker_line))
+    rows.append(("Cameras",      f"{total.get('n_models', 0)}"))
+    rows.append(("Lenses",       f"{total.get('n_lenses', 0)}"))
     rows.append(("Orientation",  orient_line))
     rows.append(("ISO",          iso_line))
     rows.append(("Aperture",     aperture_line))
@@ -488,10 +471,7 @@ def _render_summary(stats: dict[str, Any], where: str) -> str:
     rows.append(("Hour",         hour_line))
 
     key_w = max(len(k) for k, _ in rows)
-    lines = ["Summary", _HRULE]
-    for k, v in rows:
-        lines.append(f"{k:<{key_w}}  {v}")
-    return "\n".join(lines)
+    return "\n".join(f"{k:<{key_w}}  {v}" for k, v in rows)
 
 
 def _render_one_dim(

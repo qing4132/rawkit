@@ -520,23 +520,20 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 - `--recursive, -R`:递归
 - `--json`:输出完整结构化聚合(不受 `--by`/`--top` 影响),供脚本
 
-### 默认输出(单块 Summary)
+### 默认输出(精简概览)
 
-不加 `--by` 时,默认输出**一块 Summary**,所有维度内嵌一行(无 bar、无 %):
+不加 `--by` 时,直接打出一组对齐行(无标题、无横线、无 bar、无 %):
 
 ```bash
 rawkit stats samples/
 ```
 
 ```
-Summary
-────────────────────────────────────────────────────────
 Photos       25
 Total size   1.37 GiB
-Date range   2022-04-23 → 2025-08-09  (3 years, 15 months, 21 days)
-Cameras      11: EOS R5 (11), ILCE-7RM4A (5), GFX100RF (1), +8 others
-Lenses       22  (3 fixed-lens): Apo-Summicron-M 1:2/50 ASPH. (1), E 70-350mm F4.5-6.3 G OSS (1), FE 20-70mm F4 G (1), +19 others
-Makers       8: Canon (11), SONY (7), FUJIFILM (2), +5 others
+Date range   2022-04-23 → 2025-08-09  (3 years, 11 months, 17 days)
+Cameras      11
+Lenses       22
 Orientation  landscape (22), portrait (3)
 ISO          13 – 6400
 Aperture     f/1 – f/11
@@ -545,10 +542,11 @@ Focal        14mm – 800mm
 Hour         02 – 23
 ```
 
-两种摘要风格:
-- **enum**(Cameras / Lenses / Makers / Orientation):top 3 + `+N others`;值≤3 时全列。
-- **range**(ISO / Aperture / Shutter / Focal / Hour):真实极值 `min – max`(不再用桶标签)。
-- **Date range**:展开成 `(N years, N months, N days)` —— 这三个不同的"distinct count"都摊在一行里。
+字段含义:
+- **Date range**:`(N years, N months, N days)` 三者**互相独立** —— 分别是出现过的不同**日历年**、**1–12 月**、**1–31 日**的数量,而不是 `YYYY-MM` / `YYYY-MM-DD` 的去重数。
+- **Cameras / Lenses**:不同型号 / 镜头的数量。
+- **Orientation**:enum 类,top 3 + `+N others`(值少时全列)。
+- **ISO / Aperture / Shutter / Focal / Hour**:真实极值 `min – max`。
 
 **想看 bar 直方图**?用 `--by`,详细模式带 bar + 百分号:
 
