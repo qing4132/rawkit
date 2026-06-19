@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import textwrap
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
@@ -438,6 +439,159 @@ def _render_table(
 def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
     for r in records:
         typer.echo(json.dumps(r, ensure_ascii=False))
+
+
+def _bytes_human(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    x = float(n)
+    units = ["KiB", "MiB", "GiB", "TiB"]
+    for u in units:
+        x /= 1024.0
+        if x < 1024.0 or u == units[-1]:
+            return f"{x:.2f} {u}" if x < 10 else f"{x:.1f} {u}"
+    return f"{n} B"
+
+
+def _parse_by_dimensions(by: str) -> list[str] | None:
+    if not by:
+        return None
+    raw_dims = [d.strip().lower() for d in by.split(",") if d.strip()]
+    if not raw_dims:
+        typer.echo("rawkit: --by: empty value", err=True)
+        raise typer.Exit(code=2)
+    valid = set(supported_dimensions())
+    seen: set[str] = set()
+    dims: list[str] = []
+    for d in raw_dims:
+        if d not in valid:
+            typer.echo(
+                f"rawkit: --by: unknown dimension {d!r}; valid: "
+                f"{', '.join(supported_dimensions())}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        if d in seen:
+            typer.echo(f"rawkit: --by: duplicate dimension {d!r}", err=True)
+            raise typer.Exit(code=2)
+        seen.add(d)
+        dims.append(d)
+    return dims
+
+
+def _emit_stats_view(
+    raws_after_where: list[Path],
+    *,
+    where: str,
+    by: str,
+    top: int,
+    more: bool,
+    as_json: bool,
+) -> None:
+    # stats/info(dir) always needs EXIF, even without --where. Pair records
+    # back with Path objects so build_stats can read st_size.
+    records = safe_batch_read(raws_after_where)
+    by_path = {r.get("path"): r for r in records}
+    paired_records: list[dict[str, Any]] = []
+    paired_paths: list[Path] = []
+    for p in raws_after_where:
+        rec = by_path.get(str(p))
+        if rec is not None:
+            paired_records.append(rec)
+            paired_paths.append(p)
+
+    stats_data = build_stats(paired_records, paired_paths)
+
+    if as_json:
+        typer.echo(json.dumps(stats_data, ensure_ascii=False))
+        return
+
+    dims = _parse_by_dimensions(by)
+    lens_top = 999_999 if more else top
+    typer.echo(render_stats(stats_data, dims=dims, lens_top=lens_top, where=where))
+
+
+def _build_info_file_record(raw: Path, record: dict[str, Any]) -> dict[str, Any]:
+    st = raw.stat()
+    out: dict[str, Any] = {
+        "path": str(raw),
+        "size_bytes": int(st.st_size),
+        "size_human": _bytes_human(int(st.st_size)),
+        "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    # Stable, human-first field order. Only present keys are added.
+    for key in (
+        "datetime", "date", "time",
+        "maker", "model", "lens",
+        "iso", "fnumber", "shutter", "focal", "bias", "rating",
+        "orientation", "flash",
+        "image_width", "image_height", "preview_width", "preview_height",
+        "gps", "gps_lat", "gps_lon",
+    ):
+        if key in record:
+            out[key] = record[key]
+
+    if "datetime" not in out:
+        d = out.get("date")
+        t = out.get("time")
+        if d and t:
+            out["datetime"] = f"{d} {t}"
+        elif d:
+            out["datetime"] = str(d)
+        elif t:
+            out["datetime"] = str(t)
+
+    preview_w = out.get("preview_width")
+    preview_h = out.get("preview_height")
+    if isinstance(preview_w, (int, float)) and isinstance(preview_h, (int, float)):
+        out["preview"] = f"{int(preview_w)}x{int(preview_h)}"
+    else:
+        out["preview"] = "-"
+
+    lat = out.get("gps_lat")
+    lon = out.get("gps_lon")
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        out["gps_text"] = f"{float(lat):.6f}, {float(lon):.6f}"
+    else:
+        out["gps_text"] = "-"
+
+    return out
+
+
+def _inspect_embedded_jpegs(raw: Path) -> list[str]:
+    try:
+        r = extract_jpeg(raw)
+    except ExtractError as e:
+        return [f"unavailable ({e})"]
+    return [f"JPEG {r.width}x{r.height} ({_bytes_human(len(r.data))})"]
+
+
+def _render_info_file(record: dict[str, Any]) -> str:
+    rows = [
+        ("Path", record.get("path", "-")),
+        ("Size", f"{record.get('size_human', '-')} ({record.get('size_bytes', '-')} B)"),
+        ("Modified", record.get("mtime", "-")),
+        ("DateTime", record.get("datetime", "-")),
+        ("Maker", record.get("maker", "-")),
+        ("Model", record.get("model", "-")),
+        ("Lens", record.get("lens", "-")),
+        ("ISO", record.get("iso", "-")),
+        ("Aperture", f"f/{record['fnumber']:g}" if isinstance(record.get("fnumber"), (int, float)) else record.get("fnumber", "-")),
+        ("Shutter", _fmt_shutter(record.get("shutter"))),
+        ("Focal", _fmt_focal(record.get("focal"))),
+        ("Bias", _fmt_bias(record.get("bias"))),
+        ("Rating", record.get("rating", "-")),
+        ("Orientation", record.get("orientation", "-")),
+        ("Flash", record.get("flash", "-")),
+        ("Image", f"{record.get('image_width', '-')}x{record.get('image_height', '-')}"),
+        ("Preview", record.get("preview", "-")),
+        ("GPS", record.get("gps_text", "-")),
+    ]
+    if "embedded_jpegs" in record:
+        rows.append(("Embedded", "; ".join(record.get("embedded_jpegs", [])) or "-"))
+    width = max(len(k) for k, _ in rows)
+    return "\n".join(f"{k:<{width}}  {v}" for k, v in rows)
 
 
 # --- sorting ----------------------------------------------------------------
@@ -1062,6 +1216,104 @@ def cmd_render(
 # --- stats command ----------------------------------------------------------
 
 @app.command()
+def info(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Single RAW file or directories. File input = full-field view; "
+             "directory input = aggregated summary (same as stats).",
+    ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter by an EXIF predicate (same DSL as `ls --where`).",
+    ),
+    by: str = typer.Option(
+        "",
+        "--by",
+        metavar="DIMS",
+        help="Directory mode only: comma-separated dimensions for breakdown.",
+    ),
+    top: int = typer.Option(
+        5,
+        "--top",
+        metavar="N",
+        help="Directory mode only: top-N for lens breakdown.",
+    ),
+    more: bool = typer.Option(
+        False,
+        "--more",
+        help="Directory mode only: show all lenses (overrides --top).",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit JSON. File mode = one object; directory mode = full structured aggregation.",
+    ),
+) -> None:
+    """Describe RAW metadata.
+
+    - `info FILE`: full-field key/value view for one RAW.
+    - `info DIR`: aggregate summary (same as `stats DIR`).
+    - `info DIR --by ...`: directory breakdown by dimensions.
+    """
+    inputs = paths if paths else [Path(".")]
+
+    # Single-file mode: explicit file input only.
+    if len(inputs) == 1 and inputs[0].is_file():
+        if by:
+            typer.echo("rawkit: --by is only valid for directory inputs", err=True)
+            raise typer.Exit(code=2)
+
+        raws = _collect_raws(inputs, recursive=False)
+        if not raws:
+            typer.echo("no RAW files found", err=True)
+            raise typer.Exit(code=1)
+
+        raws_after_where = _filter_paths_by_where(raws, where)
+        if not raws_after_where:
+            typer.echo("no records matched --where", err=True)
+            raise typer.Exit(code=1)
+
+        raw = raws_after_where[0]
+        records = safe_batch_read([raw])
+        rec = records[0] if records else {}
+        payload = _build_info_file_record(raw, rec)
+        payload["embedded_jpegs"] = _inspect_embedded_jpegs(raw)
+        if as_json:
+            typer.echo(json.dumps(payload, ensure_ascii=False))
+        else:
+            typer.echo(_render_info_file(payload))
+        return
+
+    # Directory/multi-input mode delegates to the same aggregation as stats.
+    raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        typer.echo("no RAW files found", err=True)
+        raise typer.Exit(code=1)
+
+    raws_after_where = _filter_paths_by_where(raws, where)
+    if not raws_after_where:
+        typer.echo("no records matched --where", err=True)
+        raise typer.Exit(code=1)
+
+    _emit_stats_view(
+        raws_after_where,
+        where=where,
+        by=by,
+        top=top,
+        more=more,
+        as_json=as_json,
+    )
+
+@app.command()
 def stats(
     paths: list[Path] = typer.Argument(
         None,
@@ -1135,48 +1387,11 @@ def stats(
         typer.echo("no records matched --where", err=True)
         raise typer.Exit(code=1)
 
-    # stats always needs EXIF, even without --where. Pair records back with
-    # Path objects so build_stats can call st_size for the total-bytes line.
-    records = safe_batch_read(raws_after_where)
-    by_path = {r.get("path"): r for r in records}
-    paired_records: list[dict[str, Any]] = []
-    paired_paths: list[Path] = []
-    for p in raws_after_where:
-        rec = by_path.get(str(p))
-        if rec is not None:
-            paired_records.append(rec)
-            paired_paths.append(p)
-
-    stats_data = build_stats(paired_records, paired_paths)
-
-    if as_json:
-        typer.echo(json.dumps(stats_data, ensure_ascii=False))
-        return
-
-    # Parse --by: comma-separated, lower/strip, validate each.
-    if by:
-        raw_dims = [d.strip().lower() for d in by.split(",") if d.strip()]
-        if not raw_dims:
-            typer.echo("rawkit: --by: empty value", err=True)
-            raise typer.Exit(code=2)
-        valid = set(supported_dimensions())
-        seen: set[str] = set()
-        dims: list[str] = []
-        for d in raw_dims:
-            if d not in valid:
-                typer.echo(
-                    f"rawkit: --by: unknown dimension {d!r}; valid: "
-                    f"{', '.join(supported_dimensions())}",
-                    err=True,
-                )
-                raise typer.Exit(code=2)
-            if d in seen:
-                typer.echo(f"rawkit: --by: duplicate dimension {d!r}", err=True)
-                raise typer.Exit(code=2)
-            seen.add(d)
-            dims.append(d)
-    else:
-        dims = None  # render() defaults to ["month"]
-
-    lens_top = 999_999 if more else top
-    typer.echo(render_stats(stats_data, dims=dims, lens_top=lens_top, where=where))
+    _emit_stats_view(
+        raws_after_where,
+        where=where,
+        by=by,
+        top=top,
+        more=more,
+        as_json=as_json,
+    )

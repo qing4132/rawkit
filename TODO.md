@@ -113,6 +113,7 @@ rawkit organize ~/Pictures/卡里乱七八糟 -o ~/Pictures/sorted --by date
 
 - `verify`:检查 RAW 文件完整性(magic number / exiftool 能读全 / 字节读完不报错)。卡传输丢字节、长期 bit rot 时有用。
 - `duplicates`:找重复 RAW(按内容 hash 或 datetime+model)。合并卡 / 整理旧硬盘时有用。
+- `info` 列出 RAW 里**全部**内嵌 JPEG(不止 libraw 选的那张):当前 info 的 Embedded 行复用 extract,只有 1 张。要列全得另起 exiftool 枚举 PreviewImage / ThumbnailImage / JpgFromRaw / OtherImage。**仅当 extract 自身长出选择某张预览的能力时再做**——否则 info 看到 3 张、extract 只能拿 1 张的不对称会立刻引发新需求。dogfood 撞到再说。
 
 ---
 
