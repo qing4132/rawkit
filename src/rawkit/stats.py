@@ -319,22 +319,8 @@ def _build_dist_rows(items: list[dict[str, Any]], top: int | None = None) -> lis
     return rows
 
 
-def render_default(
-    stats: dict[str, Any],
-    *,
-    lens_top: int = 5,
-    where: str = "",
-) -> str:
-    """Render the 4-section default view: Summary / by model / by ISO / by lens (top N).
-
-    `where` (if given) is shown as a small caption beneath 'Summary' so a
-    subset stats run doesn't look like the whole library.
-    """
+def _render_summary(stats: dict[str, Any], where: str) -> str:
     total = stats.get("total", {})
-    if total.get("count", 0) == 0:
-        return "no records"
-
-    # Section 1: total summary as a plain key/value table.
     dr = total.get("date_range", [None, None])
     days = total.get("days_spanned", 0)
     date_str = f"{dr[0]} → {dr[1]}  ({days} days)" if dr[0] else "-"
@@ -351,29 +337,118 @@ def render_default(
     if where:
         summary_rows.insert(0, ("Filter",     where))
     key_w = max(len(k) for k, _ in summary_rows)
-    summary_lines = ["Summary", _HRULE]
+    lines = ["Summary", _HRULE]
     for k, v in summary_rows:
-        summary_lines.append(f"{k:<{key_w}}  {v}")
-    sections = ["\n".join(summary_lines)]
+        lines.append(f"{k:<{key_w}}  {v}")
+    return "\n".join(lines)
 
-    by_model = stats.get("by_model", [])
-    if by_model:
-        sections.append(_section("By camera", _build_dist_rows(by_model)))
 
-    by_iso = stats.get("by_iso_bucket", [])
-    if by_iso:
-        sections.append(_section("By ISO (log-scale buckets)", _build_dist_rows(by_iso)))
+def _render_one_dim(
+    stats: dict[str, Any],
+    dimension: str,
+    *,
+    top: int | None,
+) -> str:
+    """Render one dimension as a section. `top` only takes effect on
+    'lens' (the only dimension where the count of distinct keys can blow
+    up); other dimensions ignore it because their buckets are bounded."""
+    if dimension not in _DIMENSIONS:
+        raise ValueError(f"unknown dimension {dimension!r}; valid: {supported_dimensions()}")
+    title, key = _DIMENSIONS[dimension]
+    items = stats.get(key, [])
+    if not items:
+        return ""
 
-    by_lens = stats.get("by_lens", [])
-    if by_lens:
-        title = f"By lens (top {lens_top})" if len(by_lens) > lens_top else "By lens"
-        rows = _build_dist_rows(by_lens, top=lens_top)
-        sec = _section(title, rows)
-        if len(by_lens) > lens_top:
-            sec += f"\n... {len(by_lens) - lens_top} more lenses hidden (--more / --top N / --by lens to see all)"
-        sections.append(sec)
+    # Truncation only matters for unbounded dimensions (lens / day /
+    # custom strings). For bounded ones (camera / iso / aperture / focal
+    # / hour / year / month / orientation / maker) `top` is irrelevant —
+    # show all buckets.
+    apply_top = dimension in {"lens"}
+    effective_top = top if apply_top else None
 
-    return "\n\n".join(sections)
+    rows = _build_dist_rows(items, top=effective_top)
+    if apply_top and top is not None and len(items) > top:
+        sec = _section(f"{title} (top {top})", rows)
+        # English plural — special-case 'lens' (the only dimension that
+        # gets here today) rather than naive +'s'.
+        plural = {"lens": "lenses"}.get(dimension, dimension + "s")
+        sec += (
+            f"\n... {len(items) - top} more {plural} hidden "
+            f"(--more or --top N to see all)"
+        )
+        return sec
+    return _section(title, rows)
+
+
+def render(
+    stats: dict[str, Any],
+    *,
+    dims: list[str] | None = None,
+    lens_top: int = 5,
+    where: str = "",
+) -> str:
+    """Render Summary + one section per dimension in `dims`.
+
+    Default `dims` = `["month"]` — Summary plus monthly density is the
+    most universally useful glance. For other dimensions or to combine
+    several pass them explicitly:
+
+      render(stats, dims=["month"])               # default
+      render(stats, dims=["camera", "lens"])      # multi-section
+      render(stats, dims=["year", "camera"])
+    """
+    total = stats.get("total", {})
+    if total.get("count", 0) == 0:
+        return "no records"
+
+    if dims is None:
+        dims = ["month"]
+
+    sections = [_render_summary(stats, where)]
+    for dim in dims:
+        sec = _render_one_dim(stats, dim, top=lens_top)
+        if sec:
+            sections.append(sec)
+
+    out = "\n\n".join(sections)
+
+    # When the entire output is a subset (--where), show that on the by-X
+    # titles too so screenshots / shared output can't misread as full library.
+    if where:
+        n = total.get("count", 0)
+        # Append a single global filter caption after the summary block,
+        # but only the summary already shows 'Filter'; rely on that.
+        pass
+    return out
+
+
+# Backwards-compatible thin wrappers for callers / tests that referred to
+# the previous API directly. These are pure re-routes — no new behaviour.
+
+def render_default(stats: dict[str, Any], *, lens_top: int = 5, where: str = "") -> str:
+    """Compat shim: same as render() with default dims=['month']."""
+    return render(stats, dims=None, lens_top=lens_top, where=where)
+
+
+def render_by(
+    stats: dict[str, Any],
+    dimension: str,
+    *,
+    top: int | None = None,
+    where: str = "",
+) -> str:
+    """Single-dimension deep view (no Summary header). Used by the CLI's
+    older single-dim path; multi-dim users go through render()."""
+    if dimension not in _DIMENSIONS:
+        raise ValueError(f"unknown dimension {dimension!r}; valid: {supported_dimensions()}")
+    title, key = _DIMENSIONS[dimension]
+    items = stats.get(key, [])
+    if not items:
+        return f"no data for dimension {dimension!r}"
+    n = stats.get("total", {}).get("count", 0)
+    if where:
+        title = f"{title}  ·  filter: {where}  ·  n={n}"
+    return _section(title, _build_dist_rows(items, top=top))
 
 
 _DIMENSIONS = {
@@ -384,6 +459,7 @@ _DIMENSIONS = {
     # or equal to f/2.8'). In display / sort, having TWO directions for
     # the same data is confusing without payoff, so we settle on one.
     "model":       ("By camera",                            "by_model"),
+    "camera":      ("By camera",                            "by_model"),  # alias of model (display word)
     "lens":        ("By lens",                              "by_lens"),
     "maker":       ("By maker",                             "by_maker"),
     "orientation": ("By orientation",                       "by_orientation"),
@@ -407,29 +483,3 @@ _REVERSE_FOR_DISPLAY: frozenset[str] = frozenset()
 
 def supported_dimensions() -> list[str]:
     return sorted(_DIMENSIONS)
-
-
-def render_by(
-    stats: dict[str, Any],
-    dimension: str,
-    *,
-    top: int | None = None,
-    where: str = "",
-) -> str:
-    """Single-dimension deep view: no top truncation by default, full bar chart.
-
-    `where` (if given) is appended to the section title so subset stats
-    don't look like the whole library.
-    """
-    if dimension not in _DIMENSIONS:
-        raise ValueError(f"unknown dimension {dimension!r}; valid: {supported_dimensions()}")
-    title, key = _DIMENSIONS[dimension]
-    items = stats.get(key, [])
-    if not items:
-        return f"no data for dimension {dimension!r}"
-    if dimension in _REVERSE_FOR_DISPLAY:
-        items = list(reversed(items))
-    n = stats.get("total", {}).get("count", 0)
-    if where:
-        title = f"{title}  ·  filter: {where}  ·  n={n}"
-    return _section(title, _build_dist_rows(items, top=top))

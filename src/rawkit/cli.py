@@ -13,7 +13,7 @@ from rawkit.exif import safe_batch_read
 from rawkit.preview import PreviewExtractError, extract_preview
 from rawkit.query import QueryError, compile_where
 from rawkit.render import RenderError, render, suffix_for
-from rawkit.stats import build_stats, render_by, render_default, supported_dimensions
+from rawkit.stats import build_stats, render, supported_dimensions
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -888,24 +888,24 @@ def stats(
     by: str = typer.Option(
         "",
         "--by",
-        metavar="DIM",
-        help="Show one dimension in depth (no top-N truncation), replacing the "
-             "default 4-section view. Valid: model / lens / maker / orientation / "
-             "iso / fnumber (alias: aperture) / focal / hour / month. Field "
-             "names match `--where` so 'fnumber>=2.8' and '--by fnumber' refer "
-             "to the same thing.",
+        metavar="DIMS",
+        help="Comma-separated list of dimensions to break down by. Default = "
+             "'month'. Multiple = stacked sections. Valid: model / lens / "
+             "maker / orientation / iso / aperture (alias: fnumber) / focal / "
+             "hour / year / month / day. Field names match `--where`.",
     ),
     top: int = typer.Option(
         5,
         "--top",
         metavar="N",
-        help="Number of rows for the 'by lens' table in default view (only). "
-             "Use --more for full list. Ignored with --by.",
+        help="Top-N truncation for the 'lens' dimension (the only one whose "
+             "key cardinality can blow up). Other dimensions ignore this. "
+             "Use --more for the full list.",
     ),
     more: bool = typer.Option(
         False,
         "--more",
-        help="Show ALL rows in default view's lens table (overrides --top).",
+        help="Show all lenses in the 'lens' dimension (overrides --top).",
     ),
     recursive: bool = typer.Option(
         False,
@@ -922,14 +922,14 @@ def stats(
 ) -> None:
     """Aggregate EXIF + filesize across a set of RAW files.
 
-    Default output: a 4-section table covering total + by-model + by-ISO +
-    by-lens (top N). For a single-dimension deep view, use --by:
+    Default output: Summary + monthly density. For other dimensions or to
+    combine several, pass --by:
 
     \b
-      rawkit stats samples/                       # default 4-section view
-      rawkit stats ~/2026 -R --by month           # monthly density
-      rawkit stats samples/ --by hour             # golden-hour analysis
-      rawkit stats shoot/ --where 'iso>=3200'     # subset stats
+      rawkit stats samples/                          # Summary + month
+      rawkit stats samples/ --by year                # Summary + year only
+      rawkit stats samples/ --by camera,lens,month   # three sections
+      rawkit stats samples/ --where 'iso>=3200'      # subset stats
 
     Output is on stdout (data); errors and 'no records' notices on stderr.
     """
@@ -962,17 +962,30 @@ def stats(
         typer.echo(json.dumps(stats_data, ensure_ascii=False))
         return
 
+    # Parse --by: comma-separated, lower/strip, validate each.
     if by:
-        dim = by.lower().strip()
-        if dim not in supported_dimensions():
-            typer.echo(
-                f"rawkit: --by: unknown dimension {by!r}; valid: "
-                f"{', '.join(supported_dimensions())}",
-                err=True,
-            )
+        raw_dims = [d.strip().lower() for d in by.split(",") if d.strip()]
+        if not raw_dims:
+            typer.echo("rawkit: --by: empty value", err=True)
             raise typer.Exit(code=2)
-        typer.echo(render_by(stats_data, dim, where=where))
-        return
+        valid = set(supported_dimensions())
+        seen: set[str] = set()
+        dims: list[str] = []
+        for d in raw_dims:
+            if d not in valid:
+                typer.echo(
+                    f"rawkit: --by: unknown dimension {d!r}; valid: "
+                    f"{', '.join(supported_dimensions())}",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
+            if d in seen:
+                typer.echo(f"rawkit: --by: duplicate dimension {d!r}", err=True)
+                raise typer.Exit(code=2)
+            seen.add(d)
+            dims.append(d)
+    else:
+        dims = None  # render() defaults to ["month"]
 
     lens_top = 999_999 if more else top
-    typer.echo(render_default(stats_data, lens_top=lens_top, where=where))
+    typer.echo(render(stats_data, dims=dims, lens_top=lens_top, where=where))

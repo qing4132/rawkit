@@ -514,13 +514,13 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 
 - `PATHS`:同 ls/preview/render
 - `--where, -w EXPR`:复用 lark DSL(`ls --where` 同款)
-- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `maker` / `orientation` / `iso` / `aperture` (别名:`fnumber`,同方向显示) / `focal` / `hour` / `year` / `month` / `day`。**字段名跟 `--where` DSL 完全对齐**。
+- `--by DIMS`:**逗号分隔**的多维度,默认 `month`。合法值:`model`(别名:`camera`) / `lens` / `maker` / `orientation` / `iso` / `aperture`(别名:`fnumber`) / `focal` / `hour` / `year` / `month` / `day`。多维度 = 多段叠加输出。字段名跟 `--where` DSL 对齐。
 - `--top N`:默认视图中"按镜头" top N(默认 5),`--by` 模式忽略
 - `--more`:默认视图中显示全部镜头(覆盖 `--top`)
 - `--recursive, -R`:递归
 - `--json`:输出完整结构化聚合(不受 `--by`/`--top` 影响),供脚本
 
-### 默认输出(4 段)
+### 默认输出(Summary + by month)
 
 ```bash
 rawkit stats samples/
@@ -535,52 +535,51 @@ Date range  2022-04-23 → 2025-08-09  (1205 days)
 Cameras     11
 Lenses      22  (3 fixed-lens)
 
-By camera
+By month
 ────────────────────────────────────────────────────────
-EOS R5         11  █████████████                    44%
-ILCE-7RM4A      5  ██████                           20%
+2022-04  1  █                                 4%
+2022-05  2  ██                                8%
 ...
+```
 
-By ISO (log-scale buckets)
-────────────────────────────────────────────────────────
-≤100       8  ██████████                       32%
-101–200    3  ████                             12%
-201–400    7  ████████                         28%
-401–800    3  ████                             12%
-801–1600   2  ██                                8%
-1601–3200  1  █                                 4%
-3201–6400  1  █                                 4%
+组合多维度 = 多段叠加(Summary 总在头部):
 
-By lens (top 5)
-────────────────────────────────────────────────────────
-RF24-105mm F4 L IS USM  2  ██                               8%
-...
-... 17 more lenses hidden (--more / --top N / --by lens to see all)
+```bash
+rawkit stats samples/ --by camera,lens,year   # Summary + by camera + by lens + by year
+rawkit stats samples/ --by month,hour         # 时间两维度浏览
 ```
 
 视觉规则:表头加粗(TTY 时)、横线分隔、bar 用 `█`、不染色、不用 emoji、百分号纵向对齐。
 
-### `--by FIELD` 单维度详细
+### `--by` 单维度或多维度
+
+`--by` 接受**逗号分隔**的多个维度,每个一段输出。Summary 永远在最前:
 
 ```bash
-rawkit stats samples/ --by month     # 按月份(年度回顾)
-rawkit stats samples/ --by hour      # 按 EXIF 拍摄时段(3 小时桶)
-rawkit stats samples/ --by maker     # 按厂商(Sony / Canon / Fuji / ...)
-rawkit stats samples/ --by orientation  # 横图 vs 竖图
+# 单维度
 rawkit stats samples/ --by year     # 年度总量
-rawkit stats samples/ --by month    # YYYY-MM
-rawkit stats samples/ --by day      # 每天(YYYY-MM-DD)
-rawkit stats samples/ --by hour     # 24 个小时桶(00-23)
-rawkit stats samples/ --by aperture # 按光圈(f/1 → f/22,跟 fnumber 同方向)
+rawkit stats samples/ --by month    # YYYY-MM(默认)
+rawkit stats samples/ --by day      # YYYY-MM-DD
+rawkit stats samples/ --by hour     # 24 小时桶(00-23)
+rawkit stats samples/ --by camera   # 机型分布(model 的 alias)
+rawkit stats samples/ --by maker    # 厂商分布
+rawkit stats samples/ --by orientation  # 横图 vs 竖图
+rawkit stats samples/ --by aperture # 光圈(f/1 → f/22,跟 fnumber 同向)
 rawkit stats samples/ --by fnumber  # 同上(alias)
-rawkit stats samples/ --by lens     # 完整镜头分布,不 top 截断
-rawkit stats samples/ --by focal     # 按焦段类别(超广/广/标/中长/长/超长)
-rawkit stats samples/ --by lens      # 完整镜头分布,不 top 截断
+rawkit stats samples/ --by focal    # 焦段类别(超广/广/标/中长/长/超长)
+rawkit stats samples/ --by lens     # 完整镜头分布(默认 top 5,--more 看全)
+
+# 多维度 = 多段独立分布
+rawkit stats samples/ --by camera,lens         # 两段
+rawkit stats samples/ --by year,month          # 双时间粒度
+rawkit stats samples/ --by camera,maker,focal  # 三段堆叠
 ```
+
+**alias**:`camera` = `model`、`fnumber` = `aperture`。
 
 > **为什么 `aperture` 跟 `fnumber` 同时存在 且 反向(仅 `--where`)**:
 >
-> 摄影圈说"光圈"总是指镜头透光孔的大小——**f/1.4 是"大光圈"但 fnumber 数字更小**。rawkit 只在 `--where` 上接受这种反向语义(它在表达式里能避免用户 mental flip);在 `--sort` / `--by` 上两者完全一致、都按 fnumber 数值额、避免"同一个数据两个方向"的认知负担。
+> 摄影圈说"光圈"总是指镜头透光孔的大小——**f/1.4 是"大光圈"但 fnumber 数字更小**。rawkit 只在 `--where` 上接受这种反向语义(它在表达式里能避免用户 mental flip);在 `--sort` / `--by` 上两者完全一致、都按 fnumber 数值升序、避免"同一个数据两个方向"的认知负担。
 >
 > | 你想表达 | 写法 | 同义 |
 > |---|---|---|

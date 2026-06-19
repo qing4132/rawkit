@@ -175,22 +175,6 @@ def test_lensless_count() -> None:
 
 # --- render -----------------------------------------------------------------
 
-def test_render_default_contains_all_4_sections() -> None:
-    records = [
-        _record(model="EOS R5", iso=100, lens="RF24-105"),
-        _record(model="EOS R5", iso=3200, lens="RF50"),
-        _record(model="X-E5",   iso=400,  lens="XF33"),
-    ]
-    s = build_stats(records, [])
-    out = render_default(s)
-    assert "Summary" in out
-    assert "By camera" in out
-    assert "By ISO" in out
-    assert "By lens" in out
-    # Bars are present
-    assert "█" in out
-
-
 def test_render_default_with_where_shows_caption() -> None:
     records = [_record(model="EOS R5", iso=400)]
     s = build_stats(records, [])
@@ -299,26 +283,54 @@ def fake_exif(monkeypatch):
     return fake
 
 
-def test_cli_stats_default_4_sections(tmp_path, fake_exif) -> None:
-    (tmp_path / "r5a.ARW").write_bytes(b"x" * 100)
-    (tmp_path / "r5b.ARW").write_bytes(b"x" * 200)
-    (tmp_path / "xe5.RAF").write_bytes(b"x" * 50)
-
-    result = runner.invoke(app, ["stats", str(tmp_path)])
-    assert result.exit_code == 0
-    assert "Summary" in result.stdout
-    assert "By camera" in result.stdout
-    assert "EOS R5" in result.stdout
-    assert "X-E5" in result.stdout
+def test_render_default_is_summary_plus_month() -> None:
+    """Default view: Summary block + a single 'By month' section. Other
+    dimensions are opt-in via --by."""
+    records = [
+        _record(model="EOS R5", iso=100, lens="RF24-105", date="2024-01-15"),
+        _record(model="EOS R5", iso=3200, lens="RF50",   date="2024-02-10"),
+        _record(model="X-E5",   iso=400,  lens="XF33",   date="2024-02-20"),
+    ]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "Summary" in out
+    assert "By month" in out
+    # Other dimensions should NOT be in default output
+    assert "By camera" not in out
+    assert "By ISO" not in out
+    assert "By lens" not in out
+    assert "█" in out
 
 
 def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(app, ["stats", str(tmp_path), "--by", "model"])
     assert result.exit_code == 0
+    # Summary always shows; default 'By month' is replaced by the chosen dim
+    assert "Summary" in result.stdout
     assert "By camera" in result.stdout
-    # default 4 sections should NOT appear
-    assert "Summary" not in result.stdout
+    assert "By month" not in result.stdout
+
+
+def test_cli_stats_by_multiple_dimensions(tmp_path, fake_exif) -> None:
+    """Comma-separated --by produces multiple stacked sections."""
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    result = runner.invoke(
+        app, ["stats", str(tmp_path), "--by", "model,lens,year"]
+    )
+    assert result.exit_code == 0
+    assert "By camera" in result.stdout
+    assert "By lens" in result.stdout
+    assert "By year" in result.stdout
+
+
+def test_cli_stats_by_rejects_duplicate(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    result = runner.invoke(
+        app, ["stats", str(tmp_path), "--by", "model,model"]
+    )
+    assert result.exit_code == 2
+    assert "duplicate" in result.stderr
 
 
 def test_cli_stats_unknown_dimension_exits_2(tmp_path, fake_exif) -> None:
