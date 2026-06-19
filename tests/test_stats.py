@@ -104,7 +104,8 @@ def test_iso_buckets_skip_empty_ones() -> None:
 def test_aperture_bucket_snaps_to_standard() -> None:
     # 2.7 should snap to f/2.8 (within 6% tolerance)
     s = build_stats([_record(fnumber=2.7), _record(fnumber=4.0)], [])
-    keys = [b["key"] for b in s["by_aperture_bucket"]]
+    # Bucket key is 'by_fnumber_bucket' to match the DSL field name.
+    keys = [b["key"] for b in s["by_fnumber_bucket"]]
     assert "f/2.8" in keys
     assert "f/4" in keys
 
@@ -208,8 +209,47 @@ def test_render_by_caption_when_where() -> None:
 
 def test_supported_dimensions_includes_expected() -> None:
     dims = supported_dimensions()
-    for d in ("model", "lens", "iso", "aperture", "focal", "hour", "month"):
+    for d in ("model", "lens", "maker", "orientation",
+              "iso", "fnumber", "aperture", "focal", "hour", "month"):
         assert d in dims
+
+
+def test_build_stats_includes_by_maker_and_orientation() -> None:
+    records = [
+        _record(model="EOS R5", maker="Canon"),
+        _record(model="EOS R5", maker="Canon"),
+        _record(model="ILCE-7RM4A", maker="SONY"),
+    ]
+    # orientation isn't in _record's defaults — add explicitly
+    records[0]["orientation"] = "landscape"
+    records[1]["orientation"] = "portrait"
+    records[2]["orientation"] = "landscape"
+    s = build_stats(records, [])
+
+    makers = {m["key"]: m["count"] for m in s["by_maker"]}
+    assert makers == {"Canon": 2, "SONY": 1}
+
+    orients = {o["key"]: o["count"] for o in s["by_orientation"]}
+    assert orients == {"landscape": 2, "portrait": 1}
+
+
+def test_render_by_fnumber_works() -> None:
+    records = [_record(fnumber=2.8), _record(fnumber=4.0), _record(fnumber=2.8)]
+    s = build_stats(records, [])
+    out = render_by(s, "fnumber")
+    assert "f/2.8" in out
+    assert "f/4" in out
+    assert "By f-number" in out
+
+
+def test_render_by_aperture_alias_matches_fnumber() -> None:
+    """`--by aperture` must produce the same view as `--by fnumber` — they're
+    aliases. Photographer-friendly word, but the canonical field is fnumber
+    because using 'aperture' as the primary name would invert the natural
+    numeric comparison semantics (f/1.4 > f/4 'aperture-wise' but 1.4 < 4)."""
+    records = [_record(fnumber=2.8), _record(fnumber=4.0)]
+    s = build_stats(records, [])
+    assert render_by(s, "aperture") == render_by(s, "fnumber")
 
 
 # --- CLI surface ------------------------------------------------------------

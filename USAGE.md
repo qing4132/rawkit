@@ -514,7 +514,7 @@ rawkit stats [PATHS...] [-w/--where EXPR] [-R/--recursive]
 
 - `PATHS`:同 ls/preview/render
 - `--where, -w EXPR`:复用 lark DSL(`ls --where` 同款)
-- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `iso` / `aperture` / `focal` / `hour` / `month`
+- `--by DIM`:进入单维度详细视图,替代默认 4 段。合法值:`model` / `lens` / `maker` / `orientation` / `iso` / `fnumber` (别名:`aperture`) / `focal` / `hour` / `month`。**字段名跟 `--where` DSL 完全对齐**——`fnumber>=2.8` 跟 `--by fnumber` 指的是同一件事。
 - `--top N`:默认视图中"按镜头" top N(默认 5),`--by` 模式忽略
 - `--more`:默认视图中显示全部镜头(覆盖 `--top`)
 - `--recursive, -R`:递归
@@ -565,10 +565,14 @@ RF24-105mm F4 L IS USM  2  ██                               8%
 ```bash
 rawkit stats samples/ --by month     # 按月份(年度回顾)
 rawkit stats samples/ --by hour      # 按 EXIF 拍摄时段(3 小时桶)
-rawkit stats samples/ --by aperture  # 按光圈(标准档自动对齐 f/2.7 → f/2.8)
+rawkit stats samples/ --by maker     # 按厂商(Sony / Canon / Fuji / ...)
+rawkit stats samples/ --by orientation  # 横图 vs 竖图
+rawkit stats samples/ --by fnumber   # 按光圈(标准档自动对齐 f/2.7 → f/2.8)
 rawkit stats samples/ --by focal     # 按焦段类别(超广/广/标/中长/长/超长)
 rawkit stats samples/ --by lens      # 完整镜头分布,不 top 截断
 ```
+
+> **`fnumber` 而不是 `aperture` 作为规范名**:摄影圈说 "光圈" 大小跟 fnumber 数字方向**相反**(f/1.4 是 "大光圈" 但数字更小)。如果用 `aperture` 当字段名,用户写 `--where 'aperture>=2.8'` 直觉以为筛"大光圈"但其实筛到的是 fnumber≥2.8 即"小光圈"——必出错。所以规范字段名是 `fnumber`(EXIF 标准),`aperture` 仅作 `--by` 的静默别名。`--where` 一律用 `fnumber`。
 
 ### 跟 `--where` 组合(子集统计)
 

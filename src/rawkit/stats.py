@@ -208,10 +208,19 @@ def build_stats(
             "n_lensless_files": lensless_count,
         },
         "by_model": _ranked(models),
+        "by_maker": _ranked([r["maker"] for r in records if r.get("maker")]),
         "by_iso_bucket": _bucketed(list(_ISO_BUCKETS), lambda r: _iso_bucket(r.get("iso"))),
         "by_lens": _ranked(lenses),
+        "by_orientation": _ranked([r["orientation"] for r in records if r.get("orientation")]),
         # Optional dimensions, populated for --by foo views.
-        "by_aperture_bucket": _bucketed(
+        # Note: this is keyed 'by_fnumber_bucket' (NOT 'by_aperture_bucket')
+        # to match the --where DSL field name. Photographers know 'aperture'
+        # but f/1.4 is a 'larger aperture' than f/4 — naming the field after
+        # the cultural term would invert the natural <,>= semantics in the
+        # DSL. We use 'fnumber' (the EXIF tag) so 'fnumber>=2.8' means what
+        # you'd expect numerically. 'aperture' is still accepted as an alias
+        # in the CLI for convenience.
+        "by_fnumber_bucket": _bucketed(
             [(a, f"f/{a:g}") for a in _STD_APERTURES],
             lambda r: _aperture_bucket(r.get("fnumber")),
         ),
@@ -353,14 +362,21 @@ def render_default(
 
 
 _DIMENSIONS = {
-    "model":    ("By camera",                          "by_model"),
-    "lens":     ("By lens",                            "by_lens"),
-    "iso":      ("By ISO",                             "by_iso_bucket"),
-    "aperture": ("By aperture",                        "by_aperture_bucket"),
-    "focal":    ("By focal length",                    "by_focal_bucket"),
-    "hour":     ("By time of day (EXIF time, 3h blocks)", "by_hour_bucket"),
-    "month":    ("By month",                           "by_month_bucket"),
-    "day":      ("By month",                           "by_month_bucket"),  # alias
+    # Names match the --where DSL field names so users don't need to learn
+    # two vocabularies. 'aperture' is a deliberate alias of 'fnumber'
+    # because photographers know that word but using it as the canonical
+    # name would invert <,>= semantics (f/1.4 is a 'larger aperture' than f/4).
+    "model":       ("By camera",                            "by_model"),
+    "lens":        ("By lens",                              "by_lens"),
+    "maker":       ("By maker",                             "by_maker"),
+    "orientation": ("By orientation",                       "by_orientation"),
+    "iso":         ("By ISO",                               "by_iso_bucket"),
+    "fnumber":     ("By f-number",                          "by_fnumber_bucket"),
+    "aperture":    ("By f-number",                          "by_fnumber_bucket"),  # alias of fnumber
+    "focal":       ("By focal length",                      "by_focal_bucket"),
+    "hour":        ("By time of day (EXIF time, 3h blocks)", "by_hour_bucket"),
+    "month":       ("By month",                             "by_month_bucket"),
+    "day":         ("By month",                             "by_month_bucket"),  # alias of month
 }
 
 

@@ -880,8 +880,10 @@ def stats(
         "--by",
         metavar="DIM",
         help="Show one dimension in depth (no top-N truncation), replacing the "
-             "default 4-section view. Valid: model / lens / iso / aperture / "
-             "focal / hour / month.",
+             "default 4-section view. Valid: model / lens / maker / orientation / "
+             "iso / fnumber (alias: aperture) / focal / hour / month. Field "
+             "names match `--where` so 'fnumber>=2.8' and '--by fnumber' refer "
+             "to the same thing.",
     ),
     top: int = typer.Option(
         5,
