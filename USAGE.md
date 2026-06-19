@@ -560,7 +560,7 @@ rawkit stats samples/ --by camera,lens   # 多个维度,每个独立 bar
 
 ### `--by` 单维度或多维度
 
-`--by` 接受**逗号分隔**的多个维度,每个一段输出。Summary 永远在最前:
+`--by` 接受**逗号分隔**的多个维度,每个一段输出。**带 `--by` 时不再打印前边的概览行**,只出 bar chart:
 
 ```bash
 # 单维度

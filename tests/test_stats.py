@@ -425,8 +425,8 @@ def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(app, ["stats", str(tmp_path), "--by", "model"])
     assert result.exit_code == 0
-    # Overview block always shows (Photos row); chosen dim adds a By section
-    assert "Photos" in result.stdout
+    # --by suppresses the overview block; only the chosen dim section prints.
+    assert "Photos" not in result.stdout
     assert "By camera" in result.stdout
     assert "By month" not in result.stdout
 

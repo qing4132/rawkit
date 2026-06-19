@@ -562,29 +562,31 @@ def render(
     lens_top: int = 5,
     where: str = "",
 ) -> str:
-    """Render Summary + (optional) per-dimension bar charts.
+    """Render either the overview block OR per-dimension bar charts.
 
-    When `dims` is None (default), output is just the Summary block —
+    When `dims` is None (default), output is just the overview block —
     one line per dimension, totals + ranges + top-3 enums.
 
-    When `dims` is given, produce DETAILED bar-chart sections for the
-    chosen dimensions only. Multi-dim lists stack as separate sections.
+    When `dims` is given, produce ONLY the DETAILED bar-chart sections
+    for the chosen dimensions. The overview is suppressed; --by is the
+    "drill in, skip the front matter" mode.
 
-      render(stats)                            # default: Summary only
-      render(stats, dims=["month"])            # Summary + detailed by month
-      render(stats, dims=["camera", "lens"])   # Summary + two detailed sections
+      render(stats)                            # default: overview only
+      render(stats, dims=["month"])            # detailed by month, no overview
+      render(stats, dims=["camera", "lens"])   # two detailed sections
     """
     total = stats.get("total", {})
     if total.get("count", 0) == 0:
         return "no records"
 
-    sections = [_render_summary(stats, where)]
-    if dims is not None:
-        for dim in dims:
-            sec = _render_one_dim(stats, dim, top=lens_top, compact=False)
-            if sec:
-                sections.append(sec)
+    if dims is None:
+        return _render_summary(stats, where)
 
+    sections: list[str] = []
+    for dim in dims:
+        sec = _render_one_dim(stats, dim, top=lens_top, compact=False)
+        if sec:
+            sections.append(sec)
     return "\n\n".join(sections)
 
 
