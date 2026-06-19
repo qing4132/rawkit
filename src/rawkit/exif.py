@@ -105,7 +105,17 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
         # request was group-qualified (`-EXIF:ISO` still emits `"ISO"`).
         json_key = tag.rsplit(":", 1)[-1]
         if json_key in record and record[json_key] not in (None, ""):
-            out[key] = record[json_key]
+            value = record[json_key]
+            # Strip trailing/leading whitespace on string fields. Some cameras
+            # (e.g. Panasonic) write fixed-length EXIF strings padded out with
+            # spaces — LensModel = 'DC VARIO-SUMMILUX ... ASPH.' + 19 spaces.
+            # That padding is never part of the value and silently widens
+            # every aligned table downstream.
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+            out[key] = value
 
     # datetime / date / time three-field split.
     # exiftool returns 'YYYY:MM:DD HH:MM:SS' (legacy EXIF format with colons in
