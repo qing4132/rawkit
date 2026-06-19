@@ -35,7 +35,12 @@ _FIELD_MAP: tuple[tuple[str, str], ...] = (
     # surfaces as a small integer (e.g. 13 instead of 500). Without
     # the EXIF: prefix that value silently overwrites EXIF:ISO.
     ("EXIF:ISO",           "iso"),
-    ("FNumber",            "fnumber"),
+    # Same MakerNotes-pollution shape: Leica M11 Monochrom writes a
+    # garbage MakerNotes:FNumber=1.0 and skips EXIF:FNumber entirely,
+    # storing the real aperture only in EXIF:ApertureValue (APEX).
+    # Lock to EXIF:FNumber and fall back to ApertureValue in _normalize.
+    ("EXIF:FNumber",       "fnumber"),
+    ("EXIF:ApertureValue", "_apex_raw"),
     ("ExposureTime",       "shutter"),
     ("FocalLength",        "focal"),
     ("ExposureCompensation", "bias"),
@@ -123,6 +128,16 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
         out["datetime"] = normalized + suffix
         out["date"] = normalized[:10]
         out["time"] = normalized[11:19] + suffix
+
+    # Aperture fallback: if EXIF:FNumber wasn't written (Leica M11M and
+    # similar minimalist DNGs only write APEX ApertureValue), reconstruct
+    # f-number from APEX.  N = 2^(av/2).  av=2 → f/2; av=4 → f/4.
+    apex = out.pop("_apex_raw", None)
+    if "fnumber" not in out and apex is not None:
+        try:
+            out["fnumber"] = round(2.0 ** (float(apex) / 2.0), 1)
+        except (TypeError, ValueError):
+            pass
 
     raw_o = out.pop("_orientation_raw", None)
     if raw_o is not None:
