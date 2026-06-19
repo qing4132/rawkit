@@ -554,3 +554,26 @@ def test_extract_skip_existing_is_not_a_collision(tmp_path, fake_extract) -> Non
     assert result.exit_code == 0
     assert "skip" in result.stderr
     assert "collision" not in result.stderr
+
+
+def test_extract_case_insensitive_collision_detected(tmp_path, fake_extract) -> None:
+    """On macOS APFS (default case-insensitive), foo.jpg and Foo.jpg are
+    the same file → second one overwrites first. Detect that pre-write,
+    even though Python's str compare sees the paths as different."""
+    (tmp_path / "a" / "foo.CR3").parent.mkdir()
+    (tmp_path / "b" / "Foo.CR3").parent.mkdir()
+    (tmp_path / "a" / "foo.CR3").write_bytes(b"")
+    (tmp_path / "b" / "Foo.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "extract", str(tmp_path / "a" / "foo.CR3"), str(tmp_path / "b" / "Foo.CR3"),
+        "-o", str(out),
+    ])
+    assert result.exit_code == 1
+    assert "collision" in result.stderr
+    # Both case variants must be visible somewhere in the report so the
+    # user knows it was a case issue, not a name issue.
+    assert "foo" in result.stderr.lower()
+    assert "case variants" in result.stderr.lower()
+    assert not fake_extract

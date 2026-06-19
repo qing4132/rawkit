@@ -783,22 +783,33 @@ def extract(
     # run" — that case is handled per-file below with skip / --overwrite.
     # An intra-run collision is silent data loss either way, so we refuse
     # to extract anything until the user resolves it.
+    #
+    # Keys are case-folded paths: on macOS APFS (default case-insensitive)
+    # and Windows, foo.jpg and Foo.jpg map to the SAME file on disk, so
+    # the second write would silently overwrite the first. We treat them
+    # as colliding even on case-sensitive filesystems (Linux ext4) — two
+    # outputs differing only in case are too fragile to be intentional.
     out_paths: list[Path] = [
         (output / _output_relpath(r, inputs)).with_suffix(".jpg") for r in raws
     ]
-    collisions: dict[Path, list[Path]] = {}
+    collisions: dict[str, list[tuple[Path, Path]]] = {}
     for raw, out_path in zip(raws, out_paths):
-        collisions.setdefault(out_path, []).append(raw)
-    duplicated = {p: srcs for p, srcs in collisions.items() if len(srcs) > 1}
+        key = str(out_path).casefold()
+        collisions.setdefault(key, []).append((out_path, raw))
+    duplicated = {k: pairs for k, pairs in collisions.items() if len(pairs) > 1}
     if duplicated:
         typer.echo(
             f"rawkit: refusing to extract — {len(duplicated)} output collision(s):",
             err=True,
         )
-        for out_path, srcs in duplicated.items():
-            typer.echo(f"  {out_path}", err=True)
-            for s in srcs:
-                typer.echo(f"    \u2190 {s}", err=True)
+        for pairs in duplicated.values():
+            unique_outs = sorted({op for op, _ in pairs}, key=str)
+            head = str(unique_outs[0])
+            if len(unique_outs) > 1:
+                head += f"  (case variants: {', '.join(p.name for p in unique_outs[1:])})"
+            typer.echo(f"  {head}", err=True)
+            for _, src in pairs:
+                typer.echo(f"    \u2190 {src}", err=True)
         typer.echo(
             "Hint: pass the conflicting RAWs via a common parent dir with -R "
             "so they land under distinct subdirs, or rename one source.",
