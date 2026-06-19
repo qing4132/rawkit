@@ -92,14 +92,14 @@ def test_render_libraw_failure_propagates(monkeypatch) -> None:
 def test_render_max_side_downscales_long_edge(monkeypatch) -> None:
     # Landscape 4000x3000 → max_side=1000 → 1000x750 (long edge wins)
     _patch_rawpy(monkeypatch, lambda: _rgb_array(4000, 3000))
-    r = render(Path("fake.raw"), max_side=1000)
+    r = render(Path("fake.raw"), long_edge=1000)
     assert (r.width, r.height) == (1000, 750)
 
 
 def test_render_max_side_skipped_when_already_smaller(monkeypatch) -> None:
     # 800x600 with max_side=2000 → no resize
     _patch_rawpy(monkeypatch, lambda: _rgb_array(800, 600))
-    r = render(Path("fake.raw"), max_side=2000)
+    r = render(Path("fake.raw"), long_edge=2000)
     assert (r.width, r.height) == (800, 600)
 
 
@@ -120,8 +120,26 @@ def test_render_handles_monochrome_raw(monkeypatch) -> None:
 def test_render_portrait_max_side(monkeypatch) -> None:
     # Portrait 3000x4000 → max_side=1000 → 750x1000
     _patch_rawpy(monkeypatch, lambda: _rgb_array(3000, 4000))
-    r = render(Path("fake.raw"), max_side=1000)
+    r = render(Path("fake.raw"), long_edge=1000)
     assert (r.width, r.height) == (750, 1000)
+
+
+def test_render_short_edge_downscales(monkeypatch) -> None:
+    _patch_rawpy(monkeypatch, lambda: _rgb_array(3000, 4000))
+    r = render(Path("fake.raw"), short_edge=1080)
+    assert (r.width, r.height) == (1080, 1440)
+
+
+def test_render_megapixels_downscales(monkeypatch) -> None:
+    _patch_rawpy(monkeypatch, lambda: _rgb_array(4000, 3000))
+    r = render(Path("fake.raw"), megapixels=3.0)
+    assert (r.width, r.height) == (2000, 1500)
+
+
+def test_render_rejects_multiple_resize_dimensions(monkeypatch) -> None:
+    _patch_rawpy(monkeypatch, lambda: _rgb_array(1000, 800))
+    with pytest.raises(RenderError, match="at most one"):
+        render(Path("fake.raw"), long_edge=500, short_edge=400)
 
 
 def test_render_quality_affects_jpeg_size(monkeypatch) -> None:
@@ -159,16 +177,18 @@ def fake_render(monkeypatch):
     """Stub render() so CLI tests don't touch real RAW files."""
     calls: list[dict] = []
 
-    def fake(path, *, output_format="jpeg", quality=90, max_side=None):
+    def fake(path, *, output_format="jpeg", quality=90, long_edge=None, short_edge=None, megapixels=None):
         calls.append({
             "path": path,
             "format": output_format,
             "quality": quality,
-            "max_side": max_side,
+            "long_edge": long_edge,
+            "short_edge": short_edge,
+            "megapixels": megapixels,
         })
         return RenderResult(b"\xff\xd8FAKE", 4000, 3000, output_format)
 
-    monkeypatch.setattr("rawkit.cli.render", fake)
+    monkeypatch.setattr("rawkit.cli.render_raw", fake)
     return calls
 
 
@@ -180,7 +200,9 @@ def test_cli_render_default_jpeg(tmp_path, fake_render) -> None:
     assert (out / "a.jpg").read_bytes().startswith(b"\xff\xd8")
     assert fake_render[0]["format"] == "jpeg"
     assert fake_render[0]["quality"] == 90
-    assert fake_render[0]["max_side"] is None
+    assert fake_render[0]["long_edge"] is None
+    assert fake_render[0]["short_edge"] is None
+    assert fake_render[0]["megapixels"] is None
     assert "4000x3000 jpeg" in result.stderr
 
 
@@ -195,25 +217,54 @@ def test_cli_render_tiff_extension(tmp_path, fake_render) -> None:
     assert fake_render[0]["format"] == "tiff"
 
 
-def test_cli_render_passes_quality_and_max_side(tmp_path, fake_render) -> None:
+def test_cli_render_passes_quality_and_long_edge(tmp_path, fake_render) -> None:
     (tmp_path / "a.ARW").write_bytes(b"")
     out = tmp_path / "out"
     result = runner.invoke(app, [
         "render", str(tmp_path), "-o", str(out),
-        "-q", "75", "--max-side", "1024",
+        "-q", "75", "--long", "1024",
     ])
     assert result.exit_code == 0
     assert fake_render[0]["quality"] == 75
-    assert fake_render[0]["max_side"] == 1024
+    assert fake_render[0]["long_edge"] == 1024
 
 
-def test_cli_render_max_side_zero_means_native(tmp_path, fake_render) -> None:
-    """--max-side defaults to 0 which the CLI translates to None (no resize)."""
+def test_cli_render_default_no_resize(tmp_path, fake_render) -> None:
     (tmp_path / "a.ARW").write_bytes(b"")
     out = tmp_path / "out"
     result = runner.invoke(app, ["render", str(tmp_path), "-o", str(out)])
     assert result.exit_code == 0
-    assert fake_render[0]["max_side"] is None
+    assert fake_render[0]["long_edge"] is None
+    assert fake_render[0]["short_edge"] is None
+    assert fake_render[0]["megapixels"] is None
+
+
+def test_cli_render_short_flag(tmp_path, fake_render) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["render", str(tmp_path), "-o", str(out), "--short", "1080"])
+    assert result.exit_code == 0
+    assert fake_render[0]["short_edge"] == 1080
+
+
+def test_cli_render_mp_flag(tmp_path, fake_render) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["render", str(tmp_path), "-o", str(out), "--mp", "6"])
+    assert result.exit_code == 0
+    assert fake_render[0]["megapixels"] == 6.0
+
+
+def test_cli_render_rejects_multiple_resize_flags(tmp_path, fake_render) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"")
+    out = tmp_path / "out"
+    result = runner.invoke(app, [
+        "render", str(tmp_path), "-o", str(out),
+        "--long", "2000", "--short", "1080",
+    ])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.stderr
+    assert not fake_render
 
 
 def test_cli_render_skips_existing(tmp_path, fake_render) -> None:
@@ -246,7 +297,7 @@ def test_cli_render_failure_reports_and_exits_nonzero(tmp_path, monkeypatch) -> 
     def fail(path, **_):
         raise RenderError("libraw failed: bogus")
 
-    monkeypatch.setattr("rawkit.cli.render", fail)
+    monkeypatch.setattr("rawkit.cli.render_raw", fail)
 
     result = runner.invoke(app, ["render", str(tmp_path), "-o", str(tmp_path / "out")])
     assert result.exit_code == 1
@@ -320,3 +371,53 @@ def test_render_without_where_skips_exiftool(tmp_path, fake_render, monkeypatch)
     result = runner.invoke(app, ["render", str(tmp_path), "-o", str(out)])
     assert result.exit_code == 0
     assert len(fake_render) == 1
+
+
+def test_render_recursive_preserves_subtree_under_output(tmp_path, fake_render) -> None:
+    src = tmp_path / "src"
+    (src / "a" / "b").mkdir(parents=True)
+    (src / "a" / "b" / "x.ARW").write_bytes(b"")
+    (src / "a" / "b" / "y.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "render", str(src), "-R", "-o", str(out),
+    ])
+
+    assert result.exit_code == 0
+    assert (out / "a" / "b" / "x.jpg").exists()
+    assert (out / "a" / "b" / "y.jpg").exists()
+
+
+def test_render_intra_run_collision_detected(tmp_path, fake_render) -> None:
+    a = tmp_path / "A"
+    b = tmp_path / "B"
+    a.mkdir()
+    b.mkdir()
+    (a / "same.ARW").write_bytes(b"")
+    (b / "same.CR3").write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, [
+        "render", str(a / "same.ARW"), str(b / "same.CR3"),
+        "-o", str(out),
+    ])
+
+    assert result.exit_code == 1
+    assert "output collision" in result.stderr
+    assert not fake_render
+
+
+def test_render_case_insensitive_collision_detected(tmp_path, fake_render) -> None:
+    a = tmp_path / "a.ARW"
+    b = tmp_path / "A.CR3"
+    a.write_bytes(b"")
+    b.write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(app, ["render", str(a), str(b), "-o", str(out)])
+
+    assert result.exit_code == 1
+    assert "output collision" in result.stderr
+    assert "case variants" in result.stderr
+    assert not fake_render

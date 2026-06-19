@@ -14,8 +14,8 @@ import typer
 from rawkit.exif import safe_batch_read
 from rawkit.extract import ExtractError, extract_jpeg
 from rawkit.query import QueryError, compile_where
-from rawkit.render import RenderError, render, suffix_for
-from rawkit.stats import build_stats, render, supported_dimensions
+from rawkit.render import RenderError, render as render_raw, suffix_for
+from rawkit.stats import build_stats, render as render_stats, supported_dimensions
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -901,12 +901,27 @@ def cmd_render(
         max=100,
         help="JPEG quality (1-100). Ignored for TIFF/PNG (lossless).",
     ),
-    max_side: int = typer.Option(
+    long_edge: int = typer.Option(
         0,
-        "--max-side",
+        "--long",
         metavar="N",
-        help="Downscale so the long edge is at most N pixels (LANCZOS). "
-             "0 = keep native sensor resolution.",
+        help="Downscale so the LONG edge is at most N pixels (LANCZOS). "
+             "Mutually exclusive with --short / --mp.",
+    ),
+    short_edge: int = typer.Option(
+        0,
+        "--short",
+        metavar="N",
+        help="Downscale so the SHORT edge is at most N pixels. Useful for "
+             "social-media sizing (Instagram = 1080 short). "
+             "Mutually exclusive with --long / --mp.",
+    ),
+    megapixels: float = typer.Option(
+        0.0,
+        "--mp",
+        metavar="N",
+        help="Downscale so total pixels ≤ N million. e.g. --mp 12 ≈ 12-megapixel "
+             "output. Mutually exclusive with --long / --short.",
     ),
     recursive: bool = typer.Option(
         False,
@@ -950,6 +965,17 @@ def cmd_render(
     extract's ~30ms per file. Don't render thousands when extract
     would do.
     """
+    # Keep resize UX identical to `extract`.
+    set_dims = [
+        name
+        for name, val in (("--long", long_edge), ("--short", short_edge), ("--mp", megapixels))
+        if val
+    ]
+    if len(set_dims) > 1:
+        raise typer.BadParameter(
+            f"{' / '.join(set_dims)} are mutually exclusive — pick one"
+        )
+
     inputs = paths if paths else [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
@@ -960,13 +986,43 @@ def cmd_render(
 
     output.mkdir(parents=True, exist_ok=True)
     suffix = suffix_for(output_format.value)
-    max_side_arg: int | None = max_side if max_side > 0 else None
+    out_paths: list[Path] = [
+        (output / _output_relpath(r, inputs)).with_suffix(suffix) for r in raws
+    ]
+    collisions: dict[str, list[tuple[Path, Path]]] = {}
+    for raw, out_path in zip(raws, out_paths):
+        key = str(out_path).casefold()
+        collisions.setdefault(key, []).append((out_path, raw))
+    duplicated = {k: pairs for k, pairs in collisions.items() if len(pairs) > 1}
+    if duplicated:
+        typer.echo(
+            f"rawkit: refusing to render — {len(duplicated)} output collision(s):",
+            err=True,
+        )
+        for pairs in duplicated.values():
+            unique_outs = sorted({op for op, _ in pairs}, key=str)
+            head = str(unique_outs[0])
+            if len(unique_outs) > 1:
+                head += f"  (case variants: {', '.join(p.name for p in unique_outs[1:])})"
+            typer.echo(f"  {head}", err=True)
+            for _, src in pairs:
+                typer.echo(f"    ← {src}", err=True)
+        typer.echo(
+            "Hint: pass the conflicting RAWs via a common parent dir with -R "
+            "so they land under distinct subdirs, or rename one source.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    long_arg: int | None = long_edge if long_edge > 0 else None
+    short_arg: int | None = short_edge if short_edge > 0 else None
+    mp_arg: float | None = megapixels if megapixels > 0 else None
 
     n_ok = 0
     n_skipped = 0
     n_failed = 0
-    for raw in raws:
-        out_path = output / f"{raw.stem}{suffix}"
+    for raw, out_path in zip(raws, out_paths):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         if out_path.exists() and not overwrite:
             typer.echo(
                 f"{raw.name}: skip (exists, use -f to overwrite)", err=True
@@ -974,11 +1030,13 @@ def cmd_render(
             n_skipped += 1
             continue
         try:
-            result = render(
+            result = render_raw(
                 raw,
                 output_format=output_format.value,
                 quality=quality,
-                max_side=max_side_arg,
+                long_edge=long_arg,
+                short_edge=short_arg,
+                megapixels=mp_arg,
             )
         except RenderError as e:
             typer.echo(f"{raw.name}: failed — {e}", err=True)
@@ -1121,4 +1179,4 @@ def stats(
         dims = None  # render() defaults to ["month"]
 
     lens_top = 999_999 if more else top
-    typer.echo(render(stats_data, dims=dims, lens_top=lens_top, where=where))
+    typer.echo(render_stats(stats_data, dims=dims, lens_top=lens_top, where=where))

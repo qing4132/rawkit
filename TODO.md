@@ -30,6 +30,17 @@
 
 实现路径:把 `stats` 整个 rename 成 `info`,然后给它加单文件分支。
 
+### `info` 开工准备(2026-06-20)
+
+- [ ] 确认 `info` CLI 约定: `info FILE` 走单文件 KV; `info DIR` 走现有 summary; `info DIR --by ...` 走现有维度分布。
+- [ ] 明确 FILE/DIR 判定规则(混合输入时报错还是自动分流),并钉死退出码契约。
+- [ ] 复用 `safe_batch_read` 的字段集,补单文件额外字段(文件大小、像素尺寸、嵌入预览尺寸)的读取来源。
+- [ ] 新建 `tests/test_info.py`:先把 `stats` 的目录行为回归搬过去,再加单文件快照测试。
+- [ ] `stats` 迁移策略:保留一版过渡 alias(`rawkit stats` 输出 deprecation 提示)还是直接删;待拍板。
+- [ ] 文档同步: README 的 V1 surface 状态与 USAGE 命令章节统一改成 `info`。
+
+> 目标是先做到“无行为变化地接管 stats 目录模式”,再增量上 `info FILE`。
+
 ### `organize`
 
 按 EXIF 字段把文件 move 到分层目录。
@@ -87,6 +98,11 @@ rawkit organize ~/Pictures/卡里乱七八糟 -o ~/Pictures/sorted --by date
 ---
 
 ## P2 · 不紧急但确定要做
+
+- ~~`render` 对齐 `extract` 的输出路径与 resize 语义~~ ✅ 完成(2026-06-20)
+	- resize 统一为 `--long/--short/--mp` 三互斥
+	- `render -R` 输出镜像源目录结构
+	- 同次运行输出冲突(含 case-insensitive) fail-fast
 
 - `--by hour --full`:可选 flag,把空小时也打出来(默认就是分段缩写)。等用户真的提出再加。
 - `extract --watch`:监卡新文件自动 extract?违反 stateless,**不做**。

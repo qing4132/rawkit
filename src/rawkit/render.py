@@ -73,12 +73,15 @@ def render(
     *,
     output_format: str = "jpeg",
     quality: int = 90,
-    max_side: int | None = None,
+    long_edge: int | None = None,
+    short_edge: int | None = None,
+    megapixels: float | None = None,
 ) -> RenderResult:
     """Demosaic `path` through libraw, encode as `output_format`.
 
     `quality` is only consulted for JPEG (PNG/TIFF are lossless).
-    `max_side` (if set) downscales the long edge before encoding.
+    One optional resize bound may be set: `long_edge`, `short_edge`, or
+    `megapixels`.
     """
     if output_format not in _FORMATS:
         valid = ", ".join(sorted(_FORMATS))
@@ -109,9 +112,18 @@ def render(
         raise RenderError(f"libraw failed: {e}") from e
 
     img = _to_pil(rgb)
-    if max_side:
+    if long_edge or short_edge or megapixels:
         from rawkit._resize import resize_pil
-        img = resize_pil(img, long_edge=max_side)
+
+        try:
+            img = resize_pil(
+                img,
+                long_edge=long_edge,
+                short_edge=short_edge,
+                megapixels=megapixels,
+            )
+        except ValueError as e:
+            raise RenderError(str(e)) from e
 
     buf = io.BytesIO()
     pil_format, _suffix = _FORMATS[output_format]
