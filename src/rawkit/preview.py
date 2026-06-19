@@ -123,7 +123,7 @@ def extract_preview(
 
     # Resize path: decode → LANCZOS → re-encode.
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps
     except ImportError as e:
         raise PreviewExtractError(
             f"Pillow is required for --long/--short/--mp resizing: {e}"
@@ -138,6 +138,14 @@ def extract_preview(
     except Exception as e:
         raise PreviewExtractError(f"decoding embedded JPEG failed: {e}") from e
 
+    # Bake EXIF Orientation into the pixels themselves. Without this, our
+    # re-encoded JPEG loses the rotation tag (Pillow's save() doesn't preserve
+    # it unless we pass exif= explicitly), and any client that doesn't honour
+    # EXIF Orientation shows portrait shots as sideways landscapes.
+    # exif_transpose returns a new Image with pixels physically rotated and
+    # the Orientation tag stripped from info["exif"].
+    img = ImageOps.exif_transpose(img)
+
     try:
         resized = resize_pil(
             img,
@@ -148,13 +156,25 @@ def extract_preview(
     except ValueError as e:  # >1 resize dimension set
         raise PreviewExtractError(str(e)) from e
 
-    if resized is img:
-        # Image was already small enough → original bytes are still valid.
-        return PreviewResult(thumb.data, w, h)
+    # NOTE: once we've decoded for the resize path we always re-encode, even
+    # if the resize ended up a no-op. exif_transpose may have rotated pixels
+    # (Orientation != 1 source), so the original bytes are no longer correct.
 
     out = io.BytesIO()
     # subsampling=0 (4:4:4) keeps colour fidelity on the second encode; the
     # tiny extra bytes are worth it when the user explicitly asked for resize.
-    resized.save(out, format="JPEG", quality=int(quality), subsampling=0, optimize=True)
+    # Preserve the rest of the EXIF block (ISO, lens, GPS, etc.) — only
+    # Orientation was stripped by exif_transpose. info["exif"] may be empty
+    # bytes if the source had no APP1 segment; passing b"" is fine.
+    save_kwargs: dict = {
+        "format": "JPEG",
+        "quality": int(quality),
+        "subsampling": 0,
+        "optimize": True,
+    }
+    exif_bytes = img.info.get("exif")
+    if exif_bytes:
+        save_kwargs["exif"] = exif_bytes
+    resized.save(out, **save_kwargs)
     new_w, new_h = resized.size
     return PreviewResult(out.getvalue(), new_w, new_h)

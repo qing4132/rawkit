@@ -236,9 +236,11 @@ def test_extract_skips_resize_when_already_small(monkeypatch) -> None:
     jpeg = _make_real_jpeg(800, 600)
     _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
     r = extract_preview(Path("fake.cr3"), long_edge=2000)
-    # No upscale; bytes returned verbatim (the original embedded JPEG).
+    # No upscale; dimensions preserved. The resize path always re-encodes
+    # (the embedded JPEG had to be decoded for orientation handling), so
+    # the bytes aren't bitwise identical to the input — but the size is.
     assert (r.width, r.height) == (800, 600)
-    assert r.data == jpeg
+    assert r.data.startswith(b"\xff\xd8")
 
 
 def test_extract_rejects_multiple_resize_dimensions(monkeypatch) -> None:
@@ -255,6 +257,66 @@ def test_extract_no_resize_returns_original_bytes(monkeypatch) -> None:
     _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
     r = extract_preview(Path("fake.arw"))
     assert r.data is jpeg or r.data == jpeg
+
+
+def _make_jpeg_with_orientation(w: int, h: int, orientation: int) -> bytes:
+    """Build a real JPEG whose EXIF says it should be displayed with the
+    given Orientation (1 = normal, 6 = rotate 90° CW, 8 = rotate 90° CCW)."""
+    import io as _io
+    from PIL import Image
+    img = Image.new("RGB", (w, h), (128, 128, 128))
+    exif = img.getexif()
+    exif[0x0112] = orientation  # Orientation tag
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=85, exif=exif)
+    return buf.getvalue()
+
+
+def test_extract_bakes_exif_orientation_into_pixels(monkeypatch) -> None:
+    """Real-world bug: portrait photos lose their EXIF Orientation tag when
+    we re-encode for resize, leaving viewers that don't honour Orientation
+    showing portraits as sideways landscapes. Fix: bake the rotation into
+    pixels via exif_transpose before re-encoding.
+
+    Sony A7R IV portrait shot looks like: physical JPEG 1616x1080 + Orientation=8
+    (rotate 90° CCW), should display as 1080x1616. After resize the pixels must
+    physically be portrait and the Orientation tag must be absent / 1."""
+    import io as _io
+    from PIL import Image
+    jpeg = _make_jpeg_with_orientation(1616, 1080, orientation=8)
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+
+    # Resize with a long edge target larger than the long display dimension
+    # — still triggers the decode/re-encode path because of transpose.
+    r = extract_preview(Path("fake.arw"), long_edge=3000)
+
+    # Physical pixels are now portrait (rotated)
+    assert (r.width, r.height) == (1080, 1616)
+
+    # Verify the re-encoded JPEG itself has portrait pixels AND no orientation tag
+    out = Image.open(_io.BytesIO(r.data))
+    out.load()
+    assert out.size == (1080, 1616)
+    assert out.getexif().get(0x0112) in (None, 1)
+
+
+def test_extract_orientation_applied_with_actual_downscale(monkeypatch) -> None:
+    """Combine orientation bake + actual downscale. Source: 4000x3000 portrait
+    (i.e. 4000 is sensor width, displays as 3000x4000). Resize long=2000 →
+    should produce physically portrait 1500x2000."""
+    import io as _io
+    from PIL import Image
+    jpeg = _make_jpeg_with_orientation(4000, 3000, orientation=6)
+    _patch_rawpy(monkeypatch, _FakeThumb(jpeg, "JPEG"))
+
+    r = extract_preview(Path("fake.cr3"), long_edge=2000)
+    # Source displays as 3000x4000 (long=4000). long_edge=2000 → ratio 0.5
+    # → 1500x2000 physical pixels.
+    assert (r.width, r.height) == (1500, 2000)
+    out = Image.open(_io.BytesIO(r.data))
+    out.load()
+    assert out.size == (1500, 2000)
+    assert out.getexif().get(0x0112) in (None, 1)
 
 
 def test_cli_preview_long_flag(tmp_path, fake_extract) -> None:
