@@ -1,7 +1,7 @@
 [project]
 name = "rawkit"
-version = "0.0.1"
-description = "RAW photography swiss-army CLI (internal preview)."
+version = "0.1.0"
+description = "Personal RAW photo CLI: list / describe / summarize / extract / render / organize / reveal — composable through Unix pipes."
 readme = "README.md"
 authors = [
     { name = "qing4132", email = "qing4132@126.com" }
@@ -14,6 +14,11 @@ dependencies = [
     "rich>=15.0.0",
     "typer>=0.26.7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/qing4132/rawkit"
+Source = "https://github.com/qing4132/rawkit"
+Issues = "https://github.com/qing4132/rawkit/issues"
 
 [project.scripts]
 rawkit = "rawkit.cli:app"
