@@ -5,7 +5,6 @@ import os
 import shutil
 import sys
 import textwrap
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
@@ -517,7 +516,6 @@ def _build_info_file_record(raw: Path, record: dict[str, Any]) -> dict[str, Any]
         "path": str(raw),
         "size_bytes": int(st.st_size),
         "size_human": _bytes_human(int(st.st_size)),
-        "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
     }
 
     # Stable, human-first field order. Only present keys are added.
@@ -542,12 +540,8 @@ def _build_info_file_record(raw: Path, record: dict[str, Any]) -> dict[str, Any]
         elif t:
             out["datetime"] = str(t)
 
-    preview_w = out.get("preview_width")
-    preview_h = out.get("preview_height")
-    if isinstance(preview_w, (int, float)) and isinstance(preview_h, (int, float)):
-        out["preview"] = f"{int(preview_w)}x{int(preview_h)}"
-    else:
-        out["preview"] = "-"
+    preview_w = out.pop("preview_width", None)
+    preview_h = out.pop("preview_height", None)
 
     lat = out.get("gps_lat")
     lon = out.get("gps_lon")
@@ -567,25 +561,188 @@ def _inspect_embedded_jpegs(raw: Path) -> list[str]:
     return [f"JPEG {r.width}x{r.height} ({_bytes_human(len(r.data))})"]
 
 
+def _format_extent(lo: Any, hi: Any, fmt) -> str:
+    if lo is None:
+        return "-"
+    if lo == hi:
+        return fmt(lo)
+    return f"{fmt(lo)} \u2013 {fmt(hi)}"
+
+
+def _format_enum_inline(items: list[dict[str, Any]], n_distinct: int, max_list: int = 3) -> str:
+    """List names directly when count is small; otherwise show count + top-N + '+M others'."""
+    if not items:
+        return "-"
+    if n_distinct <= max_list:
+        return ", ".join(it["key"] for it in items[:n_distinct])
+    head = ", ".join(it["key"] for it in items[:max_list])
+    extra = n_distinct - max_list
+    return f"{n_distinct} ({head}, +{extra} others)"
+
+
+def _fit_enum_inline(items: list[dict[str, Any]], n_distinct: int,
+                    max_width: int | None) -> str:
+    """Largest `_format_enum_inline(max_list=k)` (k=3,2,1,0) that fits within
+    `max_width`. Falls back to k=0 (just the count + top-1 if possible, else
+    just the count) when no smaller form fits. `max_width=None` disables fitting."""
+    candidates = []
+    for k in (3, 2, 1, 0):
+        candidates.append(_format_enum_inline(items, n_distinct, max_list=k))
+    if max_width is None:
+        return candidates[0]
+    for s in candidates:
+        if len(s) <= max_width:
+            return s
+    return candidates[-1]
+
+
+def _format_count_pairs(items: list[dict[str, Any]]) -> str:
+    """`22 (landscape), 3 (portrait)` style — matches stats's existing orientation row."""
+    if not items:
+        return "-"
+    return ", ".join(f"{it['count']} ({it['key']})" for it in items)
+
+
+def _format_bool_pairs(records: list[dict[str, Any]], field: str,
+                      yes_label: str, no_label: str) -> str:
+    """For booleans tagged on each record: e.g. flash on/off, gps yes/no.
+    Records where the field is missing are bucketed under `no` — a missing
+    GPS tag means 'not geotagged', a missing Flash tag means 'didn't fire'."""
+    if not records:
+        return "-"
+    yes_n = sum(1 for r in records if r.get(field) is True)
+    no_n = len(records) - yes_n
+    return f"{yes_n} ({yes_label}), {no_n} ({no_label})"
+
+
+def _render_info_dir(stats: dict[str, Any], records: list[dict[str, Any]],
+                     path_display: str, where: str) -> str:
+    """Vertical KV description of a folder, parallel to single-file info.
+
+    Same shape as info FILE: 'this is what you're looking at', not a
+    distribution / bar-chart analysis. For drill-down per dimension, use
+    `rawkit stats --by ...`.
+    """
+    from rawkit.stats import _hours_inline
+
+    total = stats.get("total", {})
+    if total.get("count", 0) == 0:
+        return "no records"
+
+    dr = total.get("date_range", [None, None])
+    sy = total.get("span_years",  0)
+    sm = total.get("span_months", 0)
+    sd = total.get("span_days",   0)
+    if dr[0]:
+        date_str = (
+            f"{dr[0]} \u2192 {dr[1]}  "
+            f"({sy} year{'s' if sy != 1 else ''}, "
+            f"{sm} month{'s' if sm != 1 else ''}, "
+            f"{sd} day{'s' if sd != 1 else ''})"
+        )
+    else:
+        date_str = "-"
+
+    files_line = (
+        f"{total['count']} RAW{'s' if total['count'] != 1 else ''}"
+        f" ({total.get('bytes_human', '-')})"
+    )
+
+    n_models = total.get("n_models", 0)
+    n_lenses = total.get("n_lenses", 0)
+    by_maker = stats.get("by_maker", [])
+
+    # Width-aware: fit Maker / Camera / Lens lines to terminal so they never
+    # wrap. Drop names progressively (3 → 2 → 1 → 0) until it fits.
+    # Non-TTY (piped) output skips fitting — consumers want full info.
+    longest_label = 12  # "Focal length" / "Orientation"
+    label_col = longest_label + 2  # "  " separator after label
+    if sys.stdout.isatty():
+        term_w = shutil.get_terminal_size((120, 24)).columns
+        value_max = max(20, term_w - label_col)
+    else:
+        value_max = None
+
+    cameras_line = _fit_enum_inline(stats.get("by_model", []), n_models, value_max)
+    lenses_line = _fit_enum_inline(stats.get("by_lens", []), n_lenses, value_max)
+    makers_line = _fit_enum_inline(by_maker, len(by_maker), value_max)
+
+    # Bias / rating extents — computed directly from records since stats
+    # doesn't aggregate them today.
+    biases = [r["bias"] for r in records if isinstance(r.get("bias"), (int, float))]
+    if biases:
+        bias_line = _format_extent(min(biases), max(biases),
+                                   lambda v: f"{_fmt_bias(v)} EV")
+    else:
+        bias_line = "-"
+
+    # Rating distribution: count per star rating (1..5) plus an 'unrated'
+    # bucket. Rating=0 is treated as unrated (matches how LrC / Bridge /
+    # Photo Mechanic display "no star" — 0 stars = not yet rated).
+    # Order: unrated first, then ascending by rating value; empty buckets
+    # are skipped (matches how ISO/aperture buckets are rendered).
+    rating_counts: dict[int, int] = {}
+    unrated = 0
+    for r in records:
+        rv = r.get("rating")
+        if isinstance(rv, (int, float)) and int(rv) > 0:
+            rating_counts[int(rv)] = rating_counts.get(int(rv), 0) + 1
+        else:
+            unrated += 1
+
+    parts = []
+    if unrated:
+        parts.append(f"{unrated} (unrated)")
+    for k in sorted(rating_counts):
+        parts.append(f"{rating_counts[k]} ({k})")
+    rating_line = ", ".join(parts) if parts else "-"
+
+    orient_line = _format_count_pairs(stats.get("by_orientation", []))
+    flash_line = _format_bool_pairs(records, "flash", "on", "off")
+    gps_line = _format_bool_pairs(records, "gps", "yes", "no")
+
+    rows: list[tuple[str, str]] = [("Path", path_display)]
+    if where:
+        rows.append(("Filter", where))
+    rows.extend([
+        ("File", files_line),
+        ("Date range", date_str),
+        ("Hour", _hours_inline(total.get("hours_present", []))),
+        ("Maker", makers_line),
+        ("Camera", cameras_line),
+        ("Lens", lenses_line),
+        ("ISO", _format_extent(total.get("iso_min"), total.get("iso_max"), _fmt_iso)),
+        ("Aperture", _format_extent(total.get("fnumber_min"), total.get("fnumber_max"), _fmt_fnumber)),
+        ("Shutter", _format_extent(total.get("shutter_min"), total.get("shutter_max"), _fmt_shutter)),
+        ("Focal length", _format_extent(total.get("focal_min"), total.get("focal_max"), _fmt_focal)),
+        ("Bias", bias_line),
+        ("Rating", rating_line),
+        ("Orientation", orient_line),
+        ("Flash", flash_line),
+        ("GPS", gps_line),
+    ])
+
+    width = max(len(k) for k, _ in rows)
+    return "\n".join(f"{k:<{width}}  {v}" for k, v in rows)
+
+
 def _render_info_file(record: dict[str, Any]) -> str:
     rows = [
         ("Path", record.get("path", "-")),
         ("Size", f"{record.get('size_human', '-')} ({record.get('size_bytes', '-')} B)"),
-        ("Modified", record.get("mtime", "-")),
         ("DateTime", record.get("datetime", "-")),
         ("Maker", record.get("maker", "-")),
-        ("Model", record.get("model", "-")),
+        ("Camera", record.get("model", "-")),
         ("Lens", record.get("lens", "-")),
         ("ISO", record.get("iso", "-")),
         ("Aperture", f"f/{record['fnumber']:g}" if isinstance(record.get("fnumber"), (int, float)) else record.get("fnumber", "-")),
         ("Shutter", _fmt_shutter(record.get("shutter"))),
-        ("Focal", _fmt_focal(record.get("focal"))),
-        ("Bias", _fmt_bias(record.get("bias"))),
+        ("Focal length", _fmt_focal(record.get("focal"))),
+        ("Bias", f"{_fmt_bias(record.get('bias'))} EV" if record.get("bias") is not None else "-"),
         ("Rating", record.get("rating", "-")),
         ("Orientation", record.get("orientation", "-")),
         ("Flash", record.get("flash", "-")),
         ("Image", f"{record.get('image_width', '-')}x{record.get('image_height', '-')}"),
-        ("Preview", record.get("preview", "-")),
         ("GPS", record.get("gps_text", "-")),
     ]
     if "embedded_jpegs" in record:
@@ -1220,7 +1377,7 @@ def info(
     paths: list[Path] = typer.Argument(
         None,
         help="Single RAW file or directories. File input = full-field view; "
-             "directory input = aggregated summary (same as stats).",
+             "directory input = aggregated summary.",
     ),
     where: str = typer.Option(
         "",
@@ -1228,23 +1385,6 @@ def info(
         "-w",
         metavar="EXPR",
         help="Filter by an EXIF predicate (same DSL as `ls --where`).",
-    ),
-    by: str = typer.Option(
-        "",
-        "--by",
-        metavar="DIMS",
-        help="Directory mode only: comma-separated dimensions for breakdown.",
-    ),
-    top: int = typer.Option(
-        5,
-        "--top",
-        metavar="N",
-        help="Directory mode only: top-N for lens breakdown.",
-    ),
-    more: bool = typer.Option(
-        False,
-        "--more",
-        help="Directory mode only: show all lenses (overrides --top).",
     ),
     recursive: bool = typer.Option(
         False,
@@ -1255,23 +1395,20 @@ def info(
     as_json: bool = typer.Option(
         False,
         "--json",
-        help="Emit JSON. File mode = one object; directory mode = full structured aggregation.",
+        help="Emit JSON. File mode = compact info object; directory mode = full structured aggregation.",
     ),
 ) -> None:
     """Describe RAW metadata.
 
     - `info FILE`: full-field key/value view for one RAW.
-    - `info DIR`: aggregate summary (same as `stats DIR`).
-    - `info DIR --by ...`: directory breakdown by dimensions.
+    - `info DIR`: vertical KV summary of the folder.
+
+    For per-dimension distribution / bar charts use `rawkit stats --by ...`.
     """
     inputs = paths if paths else [Path(".")]
 
     # Single-file mode: explicit file input only.
     if len(inputs) == 1 and inputs[0].is_file():
-        if by:
-            typer.echo("rawkit: --by is only valid for directory inputs", err=True)
-            raise typer.Exit(code=2)
-
         raws = _collect_raws(inputs, recursive=False)
         if not raws:
             typer.echo("no RAW files found", err=True)
@@ -1293,7 +1430,7 @@ def info(
             typer.echo(_render_info_file(payload))
         return
 
-    # Directory/multi-input mode delegates to the same aggregation as stats.
+    # Directory/multi-input mode: vertical KV summary of the folder(s).
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
         typer.echo("no RAW files found", err=True)
@@ -1304,14 +1441,27 @@ def info(
         typer.echo("no records matched --where", err=True)
         raise typer.Exit(code=1)
 
-    _emit_stats_view(
-        raws_after_where,
-        where=where,
-        by=by,
-        top=top,
-        more=more,
-        as_json=as_json,
-    )
+    records = safe_batch_read(raws_after_where)
+    by_path = {r.get("path"): r for r in records}
+    paired_records: list[dict[str, Any]] = []
+    paired_paths: list[Path] = []
+    for p in raws_after_where:
+        rec = by_path.get(str(p))
+        if rec is not None:
+            paired_records.append(rec)
+            paired_paths.append(p)
+
+    stats_data = build_stats(paired_records, paired_paths)
+
+    path_display = ", ".join(str(p) for p in inputs)
+
+    if as_json:
+        payload = {"path": path_display, **stats_data}
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+        return
+
+    typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
+
 
 @app.command()
 def stats(
