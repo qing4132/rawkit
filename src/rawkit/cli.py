@@ -1480,6 +1480,100 @@ def _find_sidecars(raw: Path) -> list[Path]:
     return found
 
 
+def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
+                         simulated: bool = False) -> int:
+    """rmdir source subdirectories left empty by `moves`.
+
+    Strictly bounded: only directories that had files moved *out* of them
+    are considered, and the walk never escapes the explicit input `roots`
+    (so hidden infra like .git/ is untouched). After rmdir-ing an emptied
+    dir, climbs to its parent and repeats until hitting a root or a
+    non-empty dir.
+
+    `simulated=True` runs in dry-run mode: treats every src in `moves` as
+    already absent when checking emptiness, prints planned rmdirs without
+    touching the filesystem.
+    """
+    dir_roots: set[Path] = set()
+    for r in roots:
+        try:
+            if r.is_dir():
+                dir_roots.add(r.resolve())
+        except OSError:
+            continue
+    if not dir_roots:
+        return 0
+
+    # Collect parent dirs of moved files that live strictly inside a root.
+    affected: set[Path] = set()
+    for src, _tgt in moves:
+        try:
+            p = src.parent.resolve()
+        except OSError:
+            continue
+        if p in dir_roots:
+            continue  # root itself — never pruneable
+        if not any(r in p.parents for r in dir_roots):
+            continue  # parent not under any root
+        affected.add(p)
+
+    if not affected:
+        return 0
+
+    sim_moved: set[Path] = set()
+    if simulated:
+        for src, _tgt in moves:
+            try:
+                sim_moved.add(src.resolve())
+            except OSError:
+                pass
+
+    pruned: set[Path] = set()
+    # Deepest first so children collapse before parents.
+    for d in sorted(affected, key=lambda p: len(p.parts), reverse=True):
+        current = d
+        while current not in dir_roots:
+            if current in pruned:
+                current = current.parent
+                continue
+            try:
+                entries = list(current.iterdir())
+            except OSError as e:
+                typer.echo(f"prune {current}: failed \u2014 {e}", err=True)
+                break
+
+            if simulated:
+                all_gone = True
+                for e in entries:
+                    try:
+                        er = e.resolve()
+                    except OSError:
+                        all_gone = False
+                        break
+                    if er in sim_moved or er in pruned:
+                        continue
+                    all_gone = False
+                    break
+                if not all_gone:
+                    break
+                typer.echo(f"[dry-run] rmdir {current}", err=True)
+                pruned.add(current)
+                current = current.parent
+            else:
+                if entries:
+                    break
+                try:
+                    current.rmdir()
+                except OSError as e:
+                    typer.echo(f"rmdir {current}: failed \u2014 {e}", err=True)
+                    break
+                typer.echo(f"rmdir: {current}", err=True)
+                pruned.add(current)
+                current = current.parent
+
+    return len(pruned)
+
+
 def _parse_by_chain(by: str) -> list[str]:
     """Validate a comma-separated --by chain. Returns ordered dim keys
     (duplicates rejected). Empty `by` exits 2 — organize requires --by."""
@@ -1520,13 +1614,14 @@ def organize(
         help="Files or directories to organize. Defaults to current "
              "directory. Directories are listed top-level only unless -R.",
     ),
-    output: Path = typer.Option(
-        Path("./organized"),
+    output: Path | None = typer.Option(
+        None,
         "--output",
         "-o",
         metavar="DIR",
-        help="Destination root. Created if missing. Files land under "
-             "DIR/<bucket1>/<bucket2>/.../<basename>.",
+        help="Destination root. If omitted, defaults to the first input "
+             "directory (in-place organize). Created if missing. "
+             "Files land under DIR/<bucket1>/<bucket2>/.../<basename>.",
     ),
     by: str = typer.Option(
         "",
@@ -1570,6 +1665,14 @@ def organize(
         "-f",
         help="Overwrite existing files at the destination. Default: skip.",
     ),
+    prune: bool = typer.Option(
+        False,
+        "--prune",
+        help="After moving, rmdir source subdirectories that end up empty. "
+             "Source roots themselves are never removed. Useful for repeated "
+             "reorganizations that would otherwise leave behind empty "
+             "folder skeletons.",
+    ),
 ) -> None:
     """Move RAW files into a folder hierarchy keyed by EXIF dimensions.
 
@@ -1595,6 +1698,10 @@ def organize(
 
     inputs = paths if paths else [Path(".")]
     dims = _parse_by_chain(by)
+
+    # Default -o = first input dir (in-place organize), else cwd.
+    if output is None:
+        output = inputs[0] if inputs[0].is_dir() else Path(".")
 
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
@@ -1703,6 +1810,17 @@ def organize(
         f"\n{n_ok} {summary_verb}, {n_skipped} skipped, {n_failed} failed",
         err=True,
     )
+
+    if prune:
+        if dry_run:
+            n_pruned = _prune_empty_subdirs(inputs, moves, simulated=True)
+            if n_pruned:
+                typer.echo(f"{n_pruned} dir(s) would be pruned", err=True)
+        else:
+            n_pruned = _prune_empty_subdirs(inputs, moves)
+            if n_pruned:
+                typer.echo(f"{n_pruned} empty dir(s) removed", err=True)
+
     if n_failed:
         raise typer.Exit(code=1)
 

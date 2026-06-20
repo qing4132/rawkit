@@ -331,3 +331,91 @@ def test_organize_no_raws(tmp_path) -> None:
     assert result.exit_code == 0
     assert "no RAW files" in result.stderr
     assert not out.exists()
+
+
+def test_organize_default_output_is_in_place(tmp_path, fake_exif) -> None:
+    """When -o is omitted, the first input directory is used as DEST.
+    That gives natural in-place organize (no surprise ./organized/ layer)."""
+    (tmp_path / "a.ARW").write_bytes(b"x")
+
+    result = runner.invoke(
+        app, ["organize", str(tmp_path), "--by", "month"]
+    )
+    assert result.exit_code == 0
+    assert (tmp_path / "2024-01" / "a.ARW").exists()
+    assert not (tmp_path / "organized").exists()
+    assert not (tmp_path / "a.ARW").exists()
+
+
+def test_organize_prune_removes_empty_source_subdirs(tmp_path, fake_exif) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "shoot_a").mkdir()
+    (src / "shoot_a" / "x.ARW").write_bytes(b"x")
+    (src / "shoot_b" / "nested").mkdir(parents=True)
+    (src / "shoot_b" / "nested" / "y.ARW").write_bytes(b"y")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        ["organize", str(src), "-R", "-o", str(out), "--by", "month", "--prune"],
+    )
+    assert result.exit_code == 0
+    # Files moved to out.
+    assert (out / "2024-01" / "x.ARW").exists()
+    assert (out / "2024-01" / "y.ARW").exists()
+    # Empty source subdirs gone.
+    assert not (src / "shoot_a").exists()
+    assert not (src / "shoot_b" / "nested").exists()
+    assert not (src / "shoot_b").exists()
+    # Source root itself preserved.
+    assert src.exists()
+
+
+def test_organize_prune_skips_dirs_with_non_raw_files(tmp_path, fake_exif) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "mixed").mkdir()
+    (src / "mixed" / "a.ARW").write_bytes(b"x")
+    (src / "mixed" / "notes.txt").write_bytes(b"hello")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        ["organize", str(src), "-R", "-o", str(out), "--by", "month", "--prune"],
+    )
+    assert result.exit_code == 0
+    # The RAW moved; the txt stayed; therefore the dir is not empty; not pruned.
+    assert (out / "2024-01" / "a.ARW").exists()
+    assert (src / "mixed").exists()
+    assert (src / "mixed" / "notes.txt").exists()
+
+
+def test_organize_prune_dry_run_simulates(tmp_path, fake_exif) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "shoot").mkdir()
+    (src / "shoot" / "a.ARW").write_bytes(b"x")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        [
+            "organize",
+            str(src),
+            "-R",
+            "-o",
+            str(out),
+            "--by",
+            "month",
+            "--prune",
+            "-n",
+        ],
+    )
+    assert result.exit_code == 0
+    # Nothing actually changed.
+    assert (src / "shoot" / "a.ARW").exists()
+    assert not (out / "2024-01").exists()
+    # But the simulation reports the planned move and the planned rmdir.
+    assert "[dry-run]" in result.stderr
+    assert "rmdir" in result.stderr
