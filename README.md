@@ -77,5 +77,4 @@ uv tool install --editable .
 ## 链接
 
 - [USAGE.md](USAGE.md) — 当前可用命令的用法
-- [TODO.md](TODO.md) — 从当前到 V1 的差距
-- [docs/archive/](docs/archive/) — 早期文档(已被推翻不少,仅作历史参照)
+- [TODO.md](TODO.md) — 暂缓 / V1.x 候选 / 永久砍掉的清单
