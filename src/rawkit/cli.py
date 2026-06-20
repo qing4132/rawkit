@@ -948,9 +948,9 @@ def ls(
         "--json",
         help="Emit JSONL on stdout (one object per file) instead of an aligned table.",
     ),
-    as_paths: bool = typer.Option(
+    as_path: bool = typer.Option(
         False,
-        "--paths",
+        "--path",
         help="Emit one absolute path per line on stdout. Pipes naturally into "
              "`rawkit reveal`, `xargs`, `fzf`, etc. Mutually exclusive with --json.",
     ),
@@ -958,11 +958,11 @@ def ls(
     """List RAW files under the given paths with their key EXIF.
 
     Default output is an aligned, human-readable table. Use --json to pipe the
-    output into jq or other tooling, or --paths for plain newline-delimited
+    output into jq or other tooling, or --path for plain newline-delimited
     paths (pairs well with `rawkit reveal`).
     """
-    if as_json and as_paths:
-        typer.echo("rawkit ls: --json and --paths are mutually exclusive", err=True)
+    if as_json and as_path:
+        typer.echo("rawkit ls: --json and --path are mutually exclusive", err=True)
         raise typer.Exit(code=2)
 
     inputs = paths if paths else [Path(".")]
@@ -988,7 +988,7 @@ def ls(
 
     if as_json:
         _emit_jsonl(records)
-    elif as_paths:
+    elif as_path:
         for r in records:
             p = r.get("path")
             if p:
@@ -1970,12 +1970,12 @@ def reveal(
 
     macOS only. Paths sharing a parent directory are grouped into one
     Finder window with all of them selected; different parents open
-    separate windows. Always coupled with `ls --paths`:
+    separate windows. Always coupled with `ls --path`:
 
     \b
-        rawkit ls -w 'iso>=3200' -s iso -r --paths | rawkit reveal
-        rawkit ls -R -w 'flash' --paths | head -5 | rawkit reveal
-        rawkit ls -R -w 'rating>=4' --paths | rawkit reveal
+        rawkit ls -w 'iso>=3200' -s iso -r --path | rawkit reveal
+        rawkit ls -R -w 'flash' --path | head -5 | rawkit reveal
+        rawkit ls -R -w 'rating>=4' --path | rawkit reveal
 
     No EXIF filtering / sorting / limit lives here — that's `ls`'s job.
     reveal is the action that consumes ls's selected paths.
@@ -1992,7 +1992,7 @@ def reveal(
     else:
         typer.echo(
             "rawkit reveal: no paths given. Pass paths as arguments, "
-            "or pipe them in (e.g. `rawkit ls --paths | rawkit reveal`).",
+            "or pipe them in (e.g. `rawkit ls --path | rawkit reveal`).",
             err=True,
         )
         raise typer.Exit(code=2)

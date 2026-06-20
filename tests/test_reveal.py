@@ -1,4 +1,4 @@
-"""Tests for `rawkit reveal` and the `ls --paths` flag it pairs with.
+"""Tests for `rawkit reveal` and the `ls --path` flag it pairs with.
 
 reveal uses macOS's Finder via osascript; we patch subprocess.run to
 capture the AppleScript invocations rather than actually opening windows.
@@ -57,13 +57,13 @@ def capture_osascript(monkeypatch):
     return calls
 
 
-# --- ls --paths ------------------------------------------------------------
+# --- ls --path ------------------------------------------------------------
 
-def test_ls_paths_emits_one_per_line(tmp_path, fake_exif) -> None:
+def test_ls_path_emits_one_per_line(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     (tmp_path / "b.CR3").write_bytes(b"x")
 
-    result = runner.invoke(app, ["ls", str(tmp_path), "--paths"])
+    result = runner.invoke(app, ["ls", str(tmp_path), "--path"])
     assert result.exit_code == 0
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
     assert len(lines) == 2
@@ -74,7 +74,7 @@ def test_ls_paths_emits_one_per_line(tmp_path, fake_exif) -> None:
     assert "model" not in result.stdout
 
 
-def test_ls_paths_respects_where(tmp_path, fake_exif, monkeypatch) -> None:
+def test_ls_path_respects_where(tmp_path, fake_exif, monkeypatch) -> None:
     def fake(paths):
         return [
             {"path": str(p), "iso": 100 if "low" in Path(p).name else 6400,
@@ -86,17 +86,17 @@ def test_ls_paths_respects_where(tmp_path, fake_exif, monkeypatch) -> None:
     (tmp_path / "low.ARW").write_bytes(b"x")
     (tmp_path / "high.ARW").write_bytes(b"x")
 
-    result = runner.invoke(app, ["ls", str(tmp_path), "-w", "iso>=3200", "--paths"])
+    result = runner.invoke(app, ["ls", str(tmp_path), "-w", "iso>=3200", "--path"])
     assert result.exit_code == 0
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
     assert len(lines) == 1
     assert lines[0].endswith("high.ARW")
 
 
-def test_ls_paths_and_json_mutually_exclusive(tmp_path, fake_exif) -> None:
+def test_ls_path_and_json_mutually_exclusive(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
 
-    result = runner.invoke(app, ["ls", str(tmp_path), "--paths", "--json"])
+    result = runner.invoke(app, ["ls", str(tmp_path), "--path", "--json"])
     assert result.exit_code == 2
     assert "mutually exclusive" in result.stderr
 
