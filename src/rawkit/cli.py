@@ -601,6 +601,32 @@ def _format_extent(lo: Any, hi: Any, fmt) -> str:
     return f"{fmt(lo)} \u2013 {fmt(hi)}"
 
 
+def _summary_path_display(inputs: list[Path]) -> str:
+    """One-line description of the inputs for the `Path` row of `summary`.
+
+    The previous behaviour joined every input with ", " — that overflows
+    badly once you pipe N file paths in (`ls | summary`). Instead, fall
+    back to the common parent dir when there's more than one input.
+    Paths are resolved to absolute first so bare-basename input (from
+    `ls` in cwd) doesn't collapse to commonpath="".
+    """
+    if not inputs:
+        return "-"
+    if len(inputs) == 1:
+        return str(inputs[0])
+    abs_strs = [str(p.resolve()) for p in inputs]
+    try:
+        common = os.path.commonpath(abs_strs)
+    except ValueError:  # disjoint roots (e.g. different drives)
+        return f"{len(inputs)} paths"
+    # commonpath may land on a file (rare: all inputs identical); use its parent.
+    parent = common if os.path.isdir(common) else os.path.dirname(common) or "/"
+    home = os.path.expanduser("~")
+    if parent == home or parent.startswith(home + os.sep):
+        parent = "~" + parent[len(home):]
+    return f"{parent}/ ({len(inputs)} paths)"
+
+
 def _format_enum_inline(items: list[dict[str, Any]], n_distinct: int, max_list: int = 3) -> str:
     """List names directly when count is small; otherwise show count + top-N + '+M others'."""
     if not items:
@@ -2010,7 +2036,7 @@ def summary(
             paired_paths.append(p)
 
     stats_data = build_stats(paired_records, paired_paths)
-    path_display = ", ".join(str(p) for p in inputs)
+    path_display = _summary_path_display(inputs)
 
     if as_json:
         payload = {"path": path_display, **stats_data}

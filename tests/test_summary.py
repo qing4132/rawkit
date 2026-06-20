@@ -155,3 +155,24 @@ def test_summary_pipe_with_by(tmp_path, fake_exif) -> None:
     assert result.exit_code == 0
     assert "EOS R5" in result.stdout
     assert "100%" in result.stdout
+
+
+# --- path row truncation ----------------------------------------------------
+
+def test_summary_pipe_path_row_uses_common_parent(tmp_path, fake_exif) -> None:
+    """Piping N file paths must not blow up the Path row by joining them all;
+    it should collapse to the common parent directory + a count."""
+    for name in ("a.ARW", "b.CR3", "c.NEF", "d.RAF", "e.DNG"):
+        (tmp_path / name).write_bytes(b"x")
+    stdin = "\n".join(str(tmp_path / n) for n in
+                     ("a.ARW", "b.CR3", "c.NEF", "d.RAF", "e.DNG")) + "\n"
+
+    result = runner.invoke(app, ["summary", "-"], input=stdin)
+    assert result.exit_code == 0
+    path_rows = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
+    assert len(path_rows) == 1
+    row = path_rows[0]
+    # Must show count + a single directory, not the joined basenames.
+    assert "(5 paths)" in row
+    assert "a.ARW" not in row
+    assert "b.CR3" not in row
