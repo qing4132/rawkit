@@ -1,6 +1,8 @@
 # Usage
 
-Five commands: `ls` / `info` / `extract` / `render` / `organize`.
+Seven commands: `ls` / `info` / `summary` / `extract` / `render` / `organize` / `reveal`.
+
+All commands that take a set of files share one path-ingestion rule: positional `PATHS` (files or dirs, `-R` to recurse), `-` to read paths from stdin explicitly, or just pipe paths in (auto-detected). `ls` is the canonical selector — its piped output is one absolute path per line, ready to feed any other command.
 
 ## Install
 
@@ -164,9 +166,9 @@ Multi-dim `--by A,B` is not implemented (exits 2).
 
 ```bash
 rawkit extract [PATHS...] -o DIR [-R] [-f] [-w EXPR]
+               [--long N | --short N | --mp N] [-q N]
 rawkit extract -            # paths from stdin
 rawkit ls -w 'rating>=4' | rawkit extract -o keepers/
-                          [--long N | --short N | --mp N] [-q N]
 ```
 
 Without resize flags: hands back the camera's embedded JPEG bytes verbatim (~30ms per file). With resize: decodes + LANCZOS + re-encodes (EXIF Orientation baked into pixels).
@@ -199,10 +201,10 @@ rawkit extract . -o /tmp/keepers -w 'rating>=4'            # rated only
 
 ```bash
 rawkit render [PATHS...] -o DIR [-R] [-f] [-w EXPR]
+              [--format jpeg|tiff|png] [-q N]
+              [--long N | --short N | --mp N]
 rawkit render -             # paths from stdin
 rawkit ls -s shutter -r | head -20 | rawkit render -o longexp/
-                         [--format jpeg|tiff|png] [-q N]
-                         [--long N | --short N | --mp N]
 ```
 
 Slower than extract (~0.5–2s per file, real demosaic work). Colour drifts from SOOC — libraw uses neutral sRGB defaults, not camera Picture Styles. Use for files whose embedded JPEG is too small (Sony A7R IV embeds only 1616×1080) or when you want full-sensor output regardless.
@@ -231,9 +233,9 @@ Same output-path rules as `extract` (subtree mirror, intra-run collision fail-fa
 
 ```bash
 rawkit organize [PATHS...] [-o DIR] [--by DIM[,DIM,...]] [-R] [-w EXPR]
+                [--copy] [--prune] [-n / --dry-run] [-f]
 rawkit organize -  -o DIR   # paths from stdin (-o REQUIRED when piped)
 rawkit ls -R -w 'rating>=4' | rawkit organize -o keepers/
-                           [--copy] [--prune] [-n / --dry-run] [-f]
 ```
 
 | flag | meaning |
@@ -255,7 +257,7 @@ Behaviour:
 - `/` in bucket names (`f/2.8`, `1/250`) is replaced with `_` (`f_2.8`, `1_250`)
 - intra-run target collisions (incl. case-insensitive): fail fast before any move
 
-`--by` vocabulary is identical to `info --by`.
+`--by` vocabulary is identical to `summary --by`.
 
 ```bash
 # typical layouts
@@ -301,7 +303,7 @@ rawkit ls -R -w 'iso>=3200' -s iso -r | head -5 | rawkit reveal
 
 ## `--where` DSL
 
-Shared across `ls`, `info`, `extract`, `render`, `organize`. lark-based parser, no `eval()`.
+Shared across `ls`, `info`, `summary`, `extract`, `render`, `organize`. lark-based parser, no `eval()`.
 
 ### Fields
 

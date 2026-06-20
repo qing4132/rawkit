@@ -1,6 +1,6 @@
 # rawkit
 
-A personal RAW photo CLI. Browse, describe, extract embedded JPEGs, demosaic-render, and organize files by EXIF.
+A personal RAW photo CLI. Seven commands — list, describe per-file, summarize a set, extract or render JPEGs, organize files, reveal in Finder — that compose through Unix pipes.
 
 ## Status
 
