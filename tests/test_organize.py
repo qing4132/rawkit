@@ -467,3 +467,47 @@ def test_organize_prune_skips_dir_with_user_file_beside_ds_store(
     assert mixed.exists()
     assert (mixed / "notes.txt").exists()
     assert (mixed / ".DS_Store").exists()  # left alone since dir wasn't pruned
+
+
+def test_organize_prune_removes_preexisting_empty_dir(tmp_path, fake_exif) -> None:
+    """A directory that was empty BEFORE this run (leftover from a
+    previous reorganization) should still be pruned. The point of
+    --prune is opportunistic cleanup of source-tree cruft, not just
+    of dirs we ourselves emptied."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.ARW").write_bytes(b"x")
+    (src / "leftover_2021").mkdir()  # untouched by this run
+    (src / "leftover_with_ds_store").mkdir()
+    (src / "leftover_with_ds_store" / ".DS_Store").write_bytes(b"\x00")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        ["organize", str(src), "-R", "-o", str(out), "--by", "month", "--prune"],
+    )
+    assert result.exit_code == 0
+    assert not (src / "leftover_2021").exists()
+    assert not (src / "leftover_with_ds_store").exists()
+
+
+def test_organize_prune_skips_hidden_dirs(tmp_path, fake_exif) -> None:
+    """Hidden directories (.git/, .venv/, .anything) are NEVER touched
+    by prune, even when they're empty. They're presumed to be
+    infrastructure the user explicitly created."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.ARW").write_bytes(b"x")
+    (src / ".git").mkdir()
+    (src / ".git" / "objects").mkdir()
+    (src / ".cache").mkdir()
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        ["organize", str(src), "-R", "-o", str(out), "--by", "month", "--prune"],
+    )
+    assert result.exit_code == 0
+    assert (src / ".git").exists()
+    assert (src / ".git" / "objects").exists()
+    assert (src / ".cache").exists()

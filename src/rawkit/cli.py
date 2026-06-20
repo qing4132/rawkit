@@ -1487,42 +1487,31 @@ def _find_sidecars(raw: Path) -> list[Path]:
 
 def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
                          simulated: bool = False) -> int:
-    """rmdir source subdirectories left empty by `moves`.
+    """rmdir subdirectories of `roots` that are (or would be) empty.
 
-    Strictly bounded: only directories that had files moved *out* of them
-    are considered, and the walk never escapes the explicit input `roots`
-    (so hidden infra like .git/ is untouched). After rmdir-ing an emptied
-    dir, climbs to its parent and repeats until hitting a root or a
-    non-empty dir.
+    Scope: walks every non-hidden subdirectory under each input root.
+    'Empty' means no content other than OS junk (.DS_Store), which is
+    swept before rmdir. Pre-existing empty dirs from previous runs are
+    fair game — opportunistic cleanup is the whole point.
 
-    `simulated=True` runs in dry-run mode: treats every src in `moves` as
-    already absent when checking emptiness, prints planned rmdirs without
-    touching the filesystem.
+    Hard limits:
+    - Source roots themselves are never removed.
+    - Hidden directories (any path component starting with '.') are
+      skipped entirely. This protects .git/, .venv/, .pytest_cache/
+      and similar infrastructure from accidental deletion.
+
+    `simulated=True` runs in dry-run mode: treats every src in `moves`
+    as already absent when checking emptiness, prints planned rmdirs
+    without touching the filesystem.
     """
-    dir_roots: set[Path] = set()
+    dir_roots: list[tuple[Path, Path]] = []
     for r in roots:
         try:
             if r.is_dir():
-                dir_roots.add(r.resolve())
+                dir_roots.append((r, r.resolve()))
         except OSError:
             continue
     if not dir_roots:
-        return 0
-
-    # Collect parent dirs of moved files that live strictly inside a root.
-    affected: set[Path] = set()
-    for src, _tgt in moves:
-        try:
-            p = src.parent.resolve()
-        except OSError:
-            continue
-        if p in dir_roots:
-            continue  # root itself — never pruneable
-        if not any(r in p.parents for r in dir_roots):
-            continue  # parent not under any root
-        affected.add(p)
-
-    if not affected:
         return 0
 
     sim_moved: set[Path] = set()
@@ -1534,22 +1523,31 @@ def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
                 pass
 
     pruned: set[Path] = set()
-    # Deepest first so children collapse before parents.
-    for d in sorted(affected, key=lambda p: len(p.parts), reverse=True):
-        current = d
-        while current not in dir_roots:
-            if current in pruned:
-                current = current.parent
-                continue
+    for root, root_resolved in dir_roots:
+        for dirpath, _, _ in os.walk(root, topdown=False, followlinks=False):
+            d = Path(dirpath)
             try:
-                entries = list(current.iterdir())
-            except OSError as e:
-                typer.echo(f"prune {current}: failed \u2014 {e}", err=True)
-                break
+                d_resolved = d.resolve()
+            except OSError:
+                continue
+            if d_resolved == root_resolved:
+                continue
+            # Skip hidden infrastructure (.git/, .venv/, .pytest_cache/, …).
+            try:
+                rel_parts = d.relative_to(root).parts
+            except ValueError:
+                rel_parts = d_resolved.relative_to(root_resolved).parts
+            if any(p.startswith(".") for p in rel_parts):
+                continue
 
-            # Classify entries: real content (blocks pruning) vs junk
-            # (.DS_Store, swept before rmdir) vs already-gone
-            # (simulated-moved or previously-pruned subdir).
+            try:
+                entries = list(d.iterdir())
+            except OSError as e:
+                typer.echo(f"prune {d}: failed \u2014 {e}", err=True)
+                continue
+
+            # Classify: real content blocks; .DS_Store is sweepable junk;
+            # simulated-moved srcs and already-pruned subdirs count as gone.
             blocking = False
             junk: list[Path] = []
             for e in entries:
@@ -1561,22 +1559,19 @@ def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
                 except OSError:
                     blocking = True
                     break
-                if simulated:
-                    if er in sim_moved or er in pruned:
-                        continue
-                else:
-                    if er in pruned:
-                        continue
+                if er in pruned:
+                    continue
+                if simulated and er in sim_moved:
+                    continue
                 blocking = True
                 break
 
             if blocking:
-                break
+                continue
 
             if simulated:
-                typer.echo(f"[dry-run] rmdir {current}", err=True)
-                pruned.add(current)
-                current = current.parent
+                typer.echo(f"[dry-run] rmdir {d}", err=True)
+                pruned.add(d_resolved)
             else:
                 for j in junk:
                     try:
@@ -1584,13 +1579,12 @@ def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
                     except OSError:
                         pass  # rmdir below will report if it still fails
                 try:
-                    current.rmdir()
+                    d.rmdir()
                 except OSError as e:
-                    typer.echo(f"rmdir {current}: failed \u2014 {e}", err=True)
-                    break
-                typer.echo(f"rmdir: {current}", err=True)
-                pruned.add(current)
-                current = current.parent
+                    typer.echo(f"rmdir {d}: failed \u2014 {e}", err=True)
+                    continue
+                typer.echo(f"rmdir: {d}", err=True)
+                pruned.add(d_resolved)
 
     return len(pruned)
 
