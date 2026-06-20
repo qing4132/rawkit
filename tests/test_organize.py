@@ -534,3 +534,35 @@ def test_organize_prune_skips_hidden_dirs(tmp_path, fake_exif) -> None:
     assert (src / ".git").exists()
     assert (src / ".git" / "objects").exists()
     assert (src / ".cache").exists()
+
+
+# --- stdin / pipe ingestion -------------------------------------------------
+
+def test_organize_reads_paths_from_stdin(tmp_path, fake_exif) -> None:
+    """Pipe the keepers in, move them flat into -o."""
+    src = tmp_path / "src"
+    src.mkdir()
+    a = src / "a.ARW"
+    b = src / "b.CR3"
+    a.write_bytes(b"x")
+    b.write_bytes(b"y")
+    dst = tmp_path / "keepers"
+
+    result = runner.invoke(
+        app, ["organize", "-", "-o", str(dst)], input=f"{a}\n{b}\n"
+    )
+    assert result.exit_code == 0
+    assert (dst / "a.ARW").exists()
+    assert (dst / "b.CR3").exists()
+
+
+def test_organize_pipe_requires_output(tmp_path, fake_exif) -> None:
+    """Without -o, pipe input has no dir to fall back to → usage error."""
+    a = tmp_path / "a.ARW"
+    a.write_bytes(b"x")
+
+    result = runner.invoke(app, ["organize", "-"], input=f"{a}\n")
+    assert result.exit_code == 2
+    assert "-o" in result.stderr or "--output" in result.stderr
+    # File must not have been moved.
+    assert a.exists()

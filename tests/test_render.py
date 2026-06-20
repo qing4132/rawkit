@@ -421,3 +421,19 @@ def test_render_case_insensitive_collision_detected(tmp_path, fake_render) -> No
     assert "output collision" in result.stderr
     assert "case variants" in result.stderr
     assert not fake_render
+
+
+# --- stdin / pipe ingestion -------------------------------------------------
+
+def test_render_reads_paths_from_stdin(tmp_path, fake_render) -> None:
+    a = tmp_path / "a.ARW"
+    a.write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app, ["render", "-", "-o", str(out)], input=f"{a}\n"
+    )
+    assert result.exit_code == 0
+    assert (out / "a.jpg").exists()
+    assert len(fake_render) == 1
+    assert fake_render[0]["path"] == a

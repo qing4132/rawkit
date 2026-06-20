@@ -577,3 +577,21 @@ def test_extract_case_insensitive_collision_detected(tmp_path, fake_extract) -> 
     assert "foo" in result.stderr.lower()
     assert "case variants" in result.stderr.lower()
     assert not fake_extract
+
+
+# --- stdin / pipe ingestion -------------------------------------------------
+
+def test_extract_reads_paths_from_stdin(tmp_path, fake_extract) -> None:
+    a = tmp_path / "a.ARW"
+    b = tmp_path / "b.CR3"
+    a.write_bytes(b"")
+    b.write_bytes(b"")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app, ["extract", "-", "-o", str(out)], input=f"{a}\n{b}\n"
+    )
+    assert result.exit_code == 0
+    assert (out / "a.jpg").exists()
+    assert (out / "b.jpg").exists()
+    assert len(fake_extract) == 2

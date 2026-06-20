@@ -164,6 +164,8 @@ Multi-dim `--by A,B` is not implemented (exits 2).
 
 ```bash
 rawkit extract [PATHS...] -o DIR [-R] [-f] [-w EXPR]
+rawkit extract -            # paths from stdin
+rawkit ls -w 'rating>=4' | rawkit extract -o keepers/
                           [--long N | --short N | --mp N] [-q N]
 ```
 
@@ -197,6 +199,8 @@ rawkit extract . -o /tmp/keepers -w 'rating>=4'            # rated only
 
 ```bash
 rawkit render [PATHS...] -o DIR [-R] [-f] [-w EXPR]
+rawkit render -             # paths from stdin
+rawkit ls -s shutter -r | head -20 | rawkit render -o longexp/
                          [--format jpeg|tiff|png] [-q N]
                          [--long N | --short N | --mp N]
 ```
@@ -227,6 +231,8 @@ Same output-path rules as `extract` (subtree mirror, intra-run collision fail-fa
 
 ```bash
 rawkit organize [PATHS...] [-o DIR] [--by DIM[,DIM,...]] [-R] [-w EXPR]
+rawkit organize -  -o DIR   # paths from stdin (-o REQUIRED when piped)
+rawkit ls -R -w 'rating>=4' | rawkit organize -o keepers/
                            [--copy] [--prune] [-n / --dry-run] [-f]
 ```
 

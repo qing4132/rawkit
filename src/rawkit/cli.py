@@ -1115,7 +1115,7 @@ def extract(
             f"{' / '.join(set_dims)} are mutually exclusive — pick one"
         )
 
-    inputs = paths if paths else [Path(".")]
+    inputs = _ingest_paths(paths) or [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
         return
@@ -1324,7 +1324,7 @@ def cmd_render(
             f"{' / '.join(set_dims)} are mutually exclusive — pick one"
         )
 
-    inputs = paths if paths else [Path(".")]
+    inputs = _ingest_paths(paths) or [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
         return
@@ -1729,7 +1729,21 @@ def organize(
     """
     import shutil as _shutil
 
-    inputs = paths if paths else [Path(".")]
+    # When paths come from stdin / pipe, there's no "input dir" to fall back
+    # to for the in-place default of -o → require -o explicitly. We detect
+    # this by checking what _ingest_paths would do BEFORE calling it.
+    from_stdin = (
+        (paths and len(paths) == 1 and str(paths[0]) == "-")
+        or (not paths and not sys.stdin.isatty())
+    )
+    if from_stdin and output is None:
+        typer.echo(
+            "rawkit organize: -o/--output is required when reading paths from stdin",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    inputs = _ingest_paths(paths) or [Path(".")]
     dims = _parse_by_chain(by)
 
     # Default -o = first input dir (in-place organize), else cwd.
