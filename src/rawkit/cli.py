@@ -508,6 +508,46 @@ _INFO_BY_DIMS: dict[str, tuple[str, str]] = {
 }
 
 
+# Renames applied when serializing summary's stats payload to JSON, so
+# the keys consumers see match the `--by` vocabulary they typed instead
+# of the internal aggregate names. Internal-only; aggregate.py untouched.
+_SUMMARY_JSON_BY_RENAMES: dict[str, str] = {
+    "by_model":          "by_camera",
+    "by_fnumber_bucket": "by_aperture",
+    "by_iso_bucket":     "by_iso",
+    "by_focal_bucket":   "by_focal",
+    "by_shutter_bucket": "by_shutter",
+    "by_bias_bucket":    "by_bias",
+    "by_rating_bucket":  "by_rating",
+    "by_hour_bucket":    "by_hour",
+    "by_month_bucket":   "by_month",
+    "by_year_bucket":    "by_year",
+    "by_day_bucket":     "by_day",
+}
+_SUMMARY_JSON_TOTAL_RENAMES: dict[str, str] = {
+    "n_models":    "n_cameras",
+    "fnumber_min": "aperture_min",
+    "fnumber_max": "aperture_max",
+}
+
+
+def _summary_json_payload(stats_data: dict[str, Any],
+                          paired_paths: list[Path]) -> dict[str, Any]:
+    """Rebuild the stats dict with user-facing key names for JSON output."""
+    out: dict[str, Any] = {
+        "paths": [str(p.resolve()) for p in paired_paths],
+    }
+    for key, value in stats_data.items():
+        if key == "total" and isinstance(value, dict):
+            out["total"] = {
+                _SUMMARY_JSON_TOTAL_RENAMES.get(k, k): v
+                for k, v in value.items()
+            }
+        else:
+            out[_SUMMARY_JSON_BY_RENAMES.get(key, key)] = value
+    return out
+
+
 def _render_info_by(stats: dict[str, Any], dim: str) -> str:
     """Single-dim partition view: bare bucket rows.
 
@@ -2004,10 +2044,7 @@ def summary(
     stats_data = build_stats(paired_records, paired_paths)
 
     if as_json:
-        payload = {
-            "paths": [str(p.resolve()) for p in paired_paths],
-            **stats_data,
-        }
+        payload = _summary_json_payload(stats_data, paired_paths)
         typer.echo(json.dumps(payload, ensure_ascii=False))
         return
 

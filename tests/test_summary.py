@@ -202,3 +202,36 @@ def test_summary_has_no_path_row_under_any_input(tmp_path, fake_exif) -> None:
         assert result.exit_code == 0, cmd
         for line in result.stdout.splitlines():
             assert not line.startswith("Path"), f"unexpected Path row from {cmd}"
+
+
+# --- JSON key naming (user-facing, matches --by vocabulary) -----------------
+
+def test_summary_json_keys_match_by_vocabulary(tmp_path, fake_exif) -> None:
+    """summary --json must use the same dim names the user types after --by,
+    not the internal aggregate keys (no _bucket suffix, no fnumber/model)."""
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    (tmp_path / "b.CR3").write_bytes(b"x")
+
+    result = runner.invoke(app, ["summary", str(tmp_path), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+
+    # Each --by dim the user can type maps 1:1 to a JSON `by_<dim>` key.
+    for dim in ("camera", "lens", "maker", "orientation", "iso", "aperture",
+                "focal", "shutter", "bias", "rating", "hour", "month",
+                "year", "day"):
+        assert f"by_{dim}" in payload, f"missing by_{dim}"
+
+    # Internal names that leaked before must be gone.
+    for old in ("by_model", "by_fnumber_bucket", "by_iso_bucket",
+                "by_focal_bucket", "by_shutter_bucket", "by_bias_bucket",
+                "by_rating_bucket", "by_hour_bucket", "by_month_bucket",
+                "by_year_bucket", "by_day_bucket"):
+        assert old not in payload, f"leaked internal key {old}"
+
+    # total{} also gets the user-facing aliases.
+    total = payload["total"]
+    assert "n_cameras" in total
+    assert "aperture_min" in total and "aperture_max" in total
+    assert "n_models" not in total
+    assert "fnumber_min" not in total and "fnumber_max" not in total
