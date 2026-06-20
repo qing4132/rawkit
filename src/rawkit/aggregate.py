@@ -18,6 +18,7 @@ everything in here, and `info`, intact.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from datetime import datetime
 from calendar import monthrange
@@ -59,6 +60,53 @@ _FOCAL_BUCKETS: tuple[tuple[float, float, str], ...] = (
 # 24 hourly buckets, one per clock hour.
 _HOUR_BUCKETS: tuple[tuple[int, int, str], ...] = tuple(
     (h, h + 1, f"{h:02d}") for h in range(24)
+)
+
+# Standard shutter speeds (in seconds), full stops 1/8000 → 120s. We snap
+# each shot to the closest one in log space — same approach as aperture.
+_SHUTTER_STDS: tuple[float, ...] = (
+    1/8000, 1/4000, 1/2000, 1/1000, 1/500, 1/250, 1/125,
+    1/60,   1/30,   1/15,   1/8,    1/4,   1/2,
+    1.0,    2.0,    4.0,    8.0,    15.0,  30.0,  60.0,  120.0,
+)
+
+
+def _fmt_shutter_key(s: float) -> str:
+    if s >= 1:
+        return f"{int(s)}s" if s == int(s) else f"{s:g}s"
+    return f"1/{round(1 / s)}"
+
+
+_SHUTTER_BUCKETS: tuple[tuple[float, float, str], ...] = tuple(
+    (s, s, _fmt_shutter_key(s)) for s in _SHUTTER_STDS
+)
+
+# Exposure bias in whole EV stops, clamped to a sane ±3 EV window.
+# Sub-stop precision (1/3 EV nudges) gets rounded into the nearest integer.
+
+
+def _fmt_bias_key(i: int) -> str:
+    if i > 0:
+        return f"+{i} EV"
+    if i < 0:
+        return f"{i} EV"
+    return "0 EV"
+
+
+_BIAS_BUCKETS: tuple[tuple[int, int, str], ...] = tuple(
+    (i, i, _fmt_bias_key(i)) for i in range(-3, 4)
+)
+
+# Rating buckets: 1–5 stars plus 'unrated' (which absorbs rating=0 and the
+# absent-tag case, matching how LrC / Bridge / Photo Mechanic display
+# "no star").
+_RATING_BUCKETS: tuple[tuple[Any, Any, str], ...] = (
+    (None, None, "unrated"),
+    (None, None, "1"),
+    (None, None, "2"),
+    (None, None, "3"),
+    (None, None, "4"),
+    (None, None, "5"),
 )
 
 
@@ -130,6 +178,41 @@ def _day_bucket(date_str: str | None) -> str | None:
     if not isinstance(date_str, str) or len(date_str) < 10:
         return None
     return date_str[:10]
+
+
+def _shutter_bucket(s: float | int | None) -> str | None:
+    if s is None:
+        return None
+    try:
+        sec = float(s)
+    except (TypeError, ValueError):
+        return None
+    if sec <= 0:
+        return None
+    closest = min(_SHUTTER_STDS, key=lambda x: abs(math.log(x) - math.log(sec)))
+    return _fmt_shutter_key(closest)
+
+
+def _bias_bucket(b: float | int | None) -> str | None:
+    if b is None:
+        return None
+    try:
+        bf = float(b)
+    except (TypeError, ValueError):
+        return None
+    return _fmt_bias_key(max(-3, min(3, round(bf))))
+
+
+def _rating_bucket(r: int | float | None) -> str:
+    """Always returns a bucket; absent/0/garbage all fold into 'unrated'."""
+    if not isinstance(r, (int, float)):
+        return "unrated"
+    if r <= 0:
+        return "unrated"
+    n = int(r)
+    if n > 5:
+        return "5"
+    return str(n)
 
 
 # --- main aggregation ------------------------------------------------------
@@ -251,6 +334,9 @@ def build_stats(
             lambda r: _aperture_bucket(r.get("fnumber")),
         ),
         "by_focal_bucket": _bucketed(list(_FOCAL_BUCKETS), lambda r: _focal_bucket(r.get("focal"))),
+        "by_shutter_bucket": _bucketed(list(_SHUTTER_BUCKETS), lambda r: _shutter_bucket(r.get("shutter"))),
+        "by_bias_bucket": _bucketed(list(_BIAS_BUCKETS), lambda r: _bias_bucket(r.get("bias"))),
+        "by_rating_bucket": _bucketed(list(_RATING_BUCKETS), lambda r: _rating_bucket(r.get("rating"))),
         "by_hour_bucket": _bucketed(list(_HOUR_BUCKETS), lambda r: _hour_bucket(r.get("time"))),
         "by_month_bucket": _ranked_chrono(
             [_month_bucket(r.get("date")) for r in records],

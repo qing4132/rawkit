@@ -147,3 +147,53 @@ def test_info_directory_filter_row_shown_when_where(tmp_path, fake_exif) -> None
     assert result.exit_code == 0
     assert "Filter" in result.stdout
     assert "iso>=100" in result.stdout
+
+
+def test_info_by_camera_renders_section(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    (tmp_path / "b.CR3").write_bytes(b"x")
+
+    result = runner.invoke(app, ["info", str(tmp_path), "--by", "camera"])
+
+    assert result.exit_code == 0
+    out = result.stdout
+    assert "Camera" in out
+    assert "EOS R5" in out
+    assert "100%" in out
+    # --by suppresses the default KV view.
+    assert "Date range" not in out
+    # No bar-chart hrule / bars / "By camera" header from old stats.
+    assert "█" not in out
+    assert "──" not in out
+    assert "By camera" not in out
+
+
+def test_info_by_unknown_dim_exits_2(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    result = runner.invoke(app, ["info", str(tmp_path), "--by", "color"])
+    assert result.exit_code == 2
+    assert "unknown dimension" in result.stderr
+
+
+def test_info_by_multidim_not_yet_supported(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    result = runner.invoke(app, ["info", str(tmp_path), "--by", "camera,lens"])
+    assert result.exit_code == 2
+    assert "multi-dim" in result.stderr
+
+
+def test_info_by_file_input_rejected(tmp_path, fake_exif) -> None:
+    raw = tmp_path / "a.ARW"
+    raw.write_bytes(b"x")
+    result = runner.invoke(app, ["info", str(raw), "--by", "camera"])
+    assert result.exit_code == 2
+    assert "--by is only valid" in result.stderr
+
+
+def test_info_by_filter_caption(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"x")
+    result = runner.invoke(
+        app, ["info", str(tmp_path), "--by", "camera", "--where", "iso>=50"]
+    )
+    assert result.exit_code == 0
+    assert "filter: iso>=50" in result.stdout

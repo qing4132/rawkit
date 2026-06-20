@@ -16,11 +16,6 @@ from rawkit.exif import safe_batch_read
 from rawkit.extract import ExtractError, extract_jpeg
 from rawkit.query import QueryError, compile_where
 from rawkit.render import RenderError, render as render_raw, suffix_for
-# OPTIONAL: the stats command and its renderer. ls / extract / render / info
-# do NOT import from rawkit.stats. If you want to drop the addon, delete
-# the import below AND the entire `# --- stats command (optional) ---`
-# block further down; nothing else cares.
-from rawkit.stats import render as render_stats, supported_dimensions
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -445,62 +440,99 @@ def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
         typer.echo(json.dumps(r, ensure_ascii=False))
 
 
-def _parse_by_dimensions(by: str) -> list[str] | None:
+def _parse_by_dim(by: str) -> str | None:
+    """Validate a single-dim --by spec. Returns the dim key, or None when
+    by is empty. Multi-dim (comma-separated) is rejected as not yet built
+    — future: hierarchical partition chain matching `organize --by`."""
     if not by:
         return None
-    raw_dims = [d.strip().lower() for d in by.split(",") if d.strip()]
-    if not raw_dims:
-        typer.echo("rawkit: --by: empty value", err=True)
+    if "," in by:
+        typer.echo(
+            "rawkit: --by: multi-dim chain not yet supported "
+            "(planned: hierarchical partition matching organize)",
+            err=True,
+        )
         raise typer.Exit(code=2)
-    valid = set(supported_dimensions())
-    seen: set[str] = set()
-    dims: list[str] = []
-    for d in raw_dims:
-        if d not in valid:
-            typer.echo(
-                f"rawkit: --by: unknown dimension {d!r}; valid: "
-                f"{', '.join(supported_dimensions())}",
-                err=True,
-            )
-            raise typer.Exit(code=2)
-        if d in seen:
-            typer.echo(f"rawkit: --by: duplicate dimension {d!r}", err=True)
-            raise typer.Exit(code=2)
-        seen.add(d)
-        dims.append(d)
-    return dims
+    dim = by.strip().lower()
+    if dim not in _INFO_BY_DIMS:
+        typer.echo(
+            f"rawkit: --by: unknown dimension {dim!r}; valid: "
+            f"{', '.join(sorted(_INFO_BY_DIMS))}",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    return dim
 
 
-def _emit_stats_view(
-    raws_after_where: list[Path],
-    *,
-    where: str,
-    by: str,
-    top: int,
-    more: bool,
-    as_json: bool,
-) -> None:
-    # stats/info(dir) always needs EXIF, even without --where. Pair records
-    # back with Path objects so build_stats can read st_size.
-    records = safe_batch_read(raws_after_where)
-    by_path = {r.get("path"): r for r in records}
-    paired_records: list[dict[str, Any]] = []
-    paired_paths: list[Path] = []
-    for p in raws_after_where:
-        rec = by_path.get(str(p))
-        if rec is not None:
-            paired_records.append(rec)
-            paired_paths.append(p)
+# Maps --by dimension name → (display title, aggregate key from build_stats).
+# info owns these labels; aggregate.py only owns the data shape.
+_INFO_BY_DIMS: dict[str, tuple[str, str]] = {
+    "model":       ("Camera",       "by_model"),
+    "camera":      ("Camera",       "by_model"),  # alias
+    "lens":        ("Lens",         "by_lens"),
+    "maker":       ("Maker",        "by_maker"),
+    "orientation": ("Orientation",  "by_orientation"),
+    "iso":         ("ISO",          "by_iso_bucket"),
+    "aperture":    ("Aperture",     "by_fnumber_bucket"),
+    "fnumber":     ("Aperture",     "by_fnumber_bucket"),  # alias
+    "focal":       ("Focal length", "by_focal_bucket"),
+    "shutter":     ("Shutter",      "by_shutter_bucket"),
+    "bias":        ("Bias",         "by_bias_bucket"),
+    "rating":      ("Rating",       "by_rating_bucket"),
+    "hour":        ("Hour",         "by_hour_bucket"),
+    "year":        ("Year",         "by_year_bucket"),
+    "month":       ("Month",        "by_month_bucket"),
+    "day":         ("Day",          "by_day_bucket"),
+}
 
-    stats_data = build_stats(paired_records, paired_paths)
 
-    if as_json:
-        typer.echo(json.dumps(stats_data, ensure_ascii=False))
-        return
+def _render_info_by(stats: dict[str, Any], dim: str, *, top: int, where: str) -> str:
+    """Single-dim partition view: title + indented bucket rows.
 
-    dims = _parse_by_dimensions(by)
-    lens_top = 999_999 if more else top
-    typer.echo(render_stats(stats_data, dims=dims, lens_top=lens_top, where=where))
+    No bars, no horizontal rule. Plain count and percent share, aligned.
+    `top` truncates only the unbounded `lens` dimension; bounded dims
+    (camera count, ISO/aperture/focal/hour/orientation buckets) ignore it.
+    """
+    title, stats_key = _INFO_BY_DIMS[dim]
+    items = stats.get(stats_key, [])
+    if not items:
+        head = [title]
+        if where:
+            head.append(f"  filter: {where}")
+        head.append("")
+        head.append("  no data")
+        return "\n".join(head)
+
+    apply_top = dim == "lens"
+    display = items
+    hidden: list[dict[str, Any]] = []
+    if apply_top and top > 0 and len(items) > top:
+        display = items[:top]
+        hidden = items[top:]
+
+    rows: list[tuple[str, str, str]] = []
+    for it in display:
+        pct = round(it["share"] * 100)
+        rows.append((str(it["key"]), str(it["count"]), f"{pct}%"))
+    if hidden:
+        others_count = sum(it["count"] for it in hidden)
+        others_share = sum(it["share"] for it in hidden)
+        rows.append((
+            f"+{len(hidden)} others",
+            str(others_count),
+            f"{round(others_share * 100)}%",
+        ))
+
+    key_w = max(len(k) for k, _, _ in rows)
+    count_w = max(len(c) for _, c, _ in rows)
+
+    lines = [title]
+    if where:
+        lines.append(f"  filter: {where}")
+    lines.append("")
+    for k, c, p in rows:
+        lines.append(f"  {k:<{key_w}}  {c:>{count_w}}  {p}")
+    return "\n".join(lines)
 
 
 def _build_info_file_record(raw: Path, record: dict[str, Any]) -> dict[str, Any]:
@@ -1361,6 +1393,320 @@ def cmd_render(
         raise typer.Exit(code=1)
 
 
+# --- organize command -------------------------------------------------------
+
+# Bucket-extraction dispatch for organize. Each entry maps a --by dim name to
+# (bucket_function, record_field). Bucket functions live in aggregate.py;
+# `None` return becomes the `_unknown` directory.
+def _organize_dim_dir(dim: str, record: dict[str, Any]) -> str:
+    """Directory name for `record` along dimension `dim`. Falls back to
+    '_unknown' when the record has no value for this dim (matches the
+    documented missing-value behaviour)."""
+    from rawkit.aggregate import (
+        _aperture_bucket,
+        _bias_bucket,
+        _day_bucket,
+        _focal_bucket,
+        _hour_bucket,
+        _iso_bucket,
+        _month_bucket,
+        _rating_bucket,
+        _shutter_bucket,
+        _year_bucket,
+    )
+
+    # String fields used verbatim.
+    string_field = {
+        "camera": "model",
+        "model":  "model",
+        "lens":   "lens",
+        "maker":  "maker",
+        "orientation": "orientation",
+    }
+    if dim in string_field:
+        v = record.get(string_field[dim])
+        return v if v else "_unknown"
+
+    # Bucketed dims via aggregate.
+    bucketed: dict[str, tuple[Any, str]] = {
+        "iso":      (_iso_bucket,       "iso"),
+        "aperture": (_aperture_bucket,  "fnumber"),
+        "fnumber":  (_aperture_bucket,  "fnumber"),
+        "focal":    (_focal_bucket,     "focal"),
+        "shutter":  (_shutter_bucket,   "shutter"),
+        "bias":     (_bias_bucket,      "bias"),
+        "rating":   (_rating_bucket,    "rating"),
+        "hour":     (_hour_bucket,      "time"),
+        "month":    (_month_bucket,     "date"),
+        "year":     (_year_bucket,      "date"),
+        "day":      (_day_bucket,       "date"),
+    }
+    if dim in bucketed:
+        fn, field = bucketed[dim]
+        return fn(record.get(field)) or "_unknown"
+
+    return "_unknown"
+
+
+def _sanitize_dir_name(name: str) -> str:
+    """Replace path-unfriendly characters in a directory name. Currently
+    only the path separator '/' is replaced (with '_'); unicode characters
+    like '≤', '–', '+' and spaces are preserved as-is so the bucket name
+    stays recognisable."""
+    return name.replace("/", "_")
+
+
+# Same-stem file suffixes treated as RAW companions: LrC XMP sidecars
+# (rating / develop adjustments live here) and the SOOC JPEG some cameras
+# write next to the RAW. Lowercase-compared.
+_SIDECAR_SUFFIXES: frozenset[str] = frozenset({".xmp", ".jpg", ".jpeg"})
+
+
+def _find_sidecars(raw: Path) -> list[Path]:
+    """Find same-stem sidecars (XMP / JPG) sitting next to the RAW.
+    These describe or partner the RAW; organize moves them together so
+    the RAW's LrC rating and develop edits aren't orphaned."""
+    try:
+        siblings = list(raw.parent.iterdir())
+    except OSError:
+        return []
+    stem = raw.stem
+    found: list[Path] = []
+    for p in siblings:
+        if p == raw or not p.is_file():
+            continue
+        if p.stem == stem and p.suffix.lower() in _SIDECAR_SUFFIXES:
+            found.append(p)
+    return found
+
+
+def _parse_by_chain(by: str) -> list[str]:
+    """Validate a comma-separated --by chain. Returns ordered dim keys
+    (duplicates rejected). Empty `by` exits 2 — organize requires --by."""
+    if not by:
+        typer.echo("rawkit: organize requires --by DIM[,DIM,...]", err=True)
+        raise typer.Exit(code=2)
+    raw_dims = [d.strip().lower() for d in by.split(",") if d.strip()]
+    if not raw_dims:
+        typer.echo("rawkit: --by: empty value", err=True)
+        raise typer.Exit(code=2)
+    seen: set[str] = set()
+    dims: list[str] = []
+    for d in raw_dims:
+        if d not in _INFO_BY_DIMS:
+            typer.echo(
+                f"rawkit: --by: unknown dimension {d!r}; valid: "
+                f"{', '.join(sorted(_INFO_BY_DIMS))}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        if d in seen:
+            typer.echo(f"rawkit: --by: duplicate dimension {d!r}", err=True)
+            raise typer.Exit(code=2)
+        seen.add(d)
+        dims.append(d)
+    return dims
+
+
+def _organize_target_dir(dest: Path, dims: list[str], record: dict[str, Any]) -> Path:
+    parts = [_sanitize_dir_name(_organize_dim_dir(d, record)) for d in dims]
+    return dest.joinpath(*parts)
+
+
+@app.command()
+def organize(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Files or directories to organize. Defaults to current "
+             "directory. Directories are listed top-level only unless -R.",
+    ),
+    output: Path = typer.Option(
+        Path("./organized"),
+        "--output",
+        "-o",
+        metavar="DIR",
+        help="Destination root. Created if missing. Files land under "
+             "DIR/<bucket1>/<bucket2>/.../<basename>.",
+    ),
+    by: str = typer.Option(
+        "",
+        "--by",
+        metavar="DIM[,DIM,...]",
+        help="One or more dimensions (comma-separated) used as nested "
+             "directory layers. Same vocabulary as `info --by` and "
+             "`ls --where`: camera/model, lens, maker, orientation, iso, "
+             "aperture (alias: fnumber), focal, shutter, bias, rating, "
+             "hour, year, month, day.",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only).",
+    ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter inputs by an EXIF predicate (same DSL as `ls --where`).",
+    ),
+    copy: bool = typer.Option(
+        False,
+        "--copy",
+        help="Copy files to the destination instead of moving them. "
+             "Slower and uses 2x space; useful when DEST is on a "
+             "different drive and you want to keep the originals.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        "-n",
+        help="Print the planned moves without touching the filesystem.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        "-f",
+        help="Overwrite existing files at the destination. Default: skip.",
+    ),
+) -> None:
+    """Move RAW files into a folder hierarchy keyed by EXIF dimensions.
+
+    \b
+    Examples:
+      rawkit organize ~/dump -o ~/sorted --by month
+      rawkit organize ~/dump -o ~/sorted --by year,month
+      rawkit organize ~/dump -o ~/sorted --by camera,year -R
+
+    \b
+    Behaviour:
+      - Default action is MOVE; pass --copy to copy instead.
+      - Same-stem .xmp / .jpg sidecars move alongside the RAW so LrC
+        ratings and develop adjustments aren't orphaned.
+      - Files missing the relevant EXIF value land in '_unknown/'.
+      - Target collisions (including case-insensitive on macOS/Windows)
+        cause a fail-fast refusal before any file is touched.
+
+    Progress and outcomes go to stderr; stdout is left empty so you can
+    pipe `find … | xargs rawkit organize` without surprises.
+    """
+    import shutil as _shutil
+
+    inputs = paths if paths else [Path(".")]
+    dims = _parse_by_chain(by)
+
+    raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        typer.echo("no RAW files found", err=True)
+        return
+
+    # Compile --where once; reuse on each record.
+    predicate = None
+    if where:
+        try:
+            predicate = compile_where(where)
+        except QueryError as e:
+            typer.echo(f"rawkit: --where: {e}", err=True)
+            raise typer.Exit(code=2)
+
+    records = safe_batch_read(raws)
+    by_path = {r.get("path"): r for r in records}
+
+    # Build a flat plan of (source, target) moves — RAW + its sidecars.
+    moves: list[tuple[Path, Path]] = []
+    for raw in raws:
+        rec = by_path.get(str(raw), {})
+        if predicate is not None and not predicate(rec):
+            continue
+        target_dir = _organize_target_dir(output, dims, rec)
+        moves.append((raw, target_dir / raw.name))
+        for sidecar in _find_sidecars(raw):
+            moves.append((sidecar, target_dir / sidecar.name))
+
+    if not moves:
+        if where:
+            typer.echo("no records matched --where", err=True)
+        else:
+            typer.echo("nothing to organize", err=True)
+        return
+
+    # Collision preflight (intra-run, case-fold) — matches extract/render.
+    collisions: dict[str, list[tuple[Path, Path]]] = {}
+    for src, tgt in moves:
+        key = str(tgt).casefold()
+        collisions.setdefault(key, []).append((tgt, src))
+    duplicated = {k: v for k, v in collisions.items() if len(v) > 1}
+    if duplicated:
+        typer.echo(
+            f"rawkit: refusing to organize — {len(duplicated)} target collision(s):",
+            err=True,
+        )
+        for pairs in duplicated.values():
+            unique_targets = sorted({t for t, _ in pairs}, key=str)
+            head = str(unique_targets[0])
+            if len(unique_targets) > 1:
+                head += f"  (case variants: {', '.join(p.name for p in unique_targets[1:])})"
+            typer.echo(f"  {head}", err=True)
+            for _, src in pairs:
+                typer.echo(f"    \u2190 {src}", err=True)
+        typer.echo(
+            "Hint: add another dimension to --by so the conflicting RAWs "
+            "land under distinct subdirs, or rename one source.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    n_ok = 0
+    n_skipped = 0
+    n_failed = 0
+    verb_past = "copied" if copy else "moved"
+    for src, tgt in moves:
+        # Source already at the target path (e.g., source==dest in-place
+        # organize where this file is already in the right bucket).
+        try:
+            same = src.exists() and tgt.exists() and src.resolve() == tgt.resolve()
+        except OSError:
+            same = False
+        if same:
+            n_skipped += 1
+            continue
+
+        if tgt.exists() and not overwrite:
+            typer.echo(
+                f"{src.name}: skip (exists, use -f to overwrite)", err=True
+            )
+            n_skipped += 1
+            continue
+
+        if dry_run:
+            typer.echo(f"[dry-run] {src} -> {tgt}", err=True)
+            n_ok += 1
+            continue
+
+        try:
+            tgt.parent.mkdir(parents=True, exist_ok=True)
+            if copy:
+                _shutil.copy2(src, tgt)
+            else:
+                _shutil.move(str(src), str(tgt))
+        except OSError as e:
+            typer.echo(f"{src.name}: failed — {e}", err=True)
+            n_failed += 1
+            continue
+
+        typer.echo(f"{verb_past}: {src.name} -> {tgt}", err=True)
+        n_ok += 1
+
+    summary_verb = "planned" if dry_run else verb_past
+    typer.echo(
+        f"\n{n_ok} {summary_verb}, {n_skipped} skipped, {n_failed} failed",
+        err=True,
+    )
+    if n_failed:
+        raise typer.Exit(code=1)
+
+
 # --- info command -----------------------------------------------------------
 
 @app.command()
@@ -1376,6 +1722,26 @@ def info(
         "-w",
         metavar="EXPR",
         help="Filter by an EXIF predicate (same DSL as `ls --where`).",
+    ),
+    by: str = typer.Option(
+        "",
+        "--by",
+        metavar="DIM",
+        help="Directory mode only: partition by one dimension instead of the "
+             "default summary. Valid: camera/model, lens, maker, orientation, "
+             "iso, aperture (alias: fnumber), focal, hour, year, month, day.",
+    ),
+    top: int = typer.Option(
+        5,
+        "--top",
+        metavar="N",
+        help="With --by lens: keep top N, collapse the rest into '+others'. "
+             "Other dimensions ignore this (their buckets are bounded).",
+    ),
+    more: bool = typer.Option(
+        False,
+        "--more",
+        help="With --by lens: show all lenses (overrides --top).",
     ),
     recursive: bool = typer.Option(
         False,
@@ -1393,13 +1759,16 @@ def info(
 
     - `info FILE`: full-field key/value view for one RAW.
     - `info DIR`: vertical KV summary of the folder.
-
-    For per-dimension distribution / bar charts use `rawkit stats --by ...`.
+    - `info DIR --by DIM`: partition the folder along one dimension.
     """
     inputs = paths if paths else [Path(".")]
 
     # Single-file mode: explicit file input only.
     if len(inputs) == 1 and inputs[0].is_file():
+        if by:
+            typer.echo("rawkit: --by is only valid for directory inputs", err=True)
+            raise typer.Exit(code=2)
+
         raws = _collect_raws(inputs, recursive=False)
         if not raws:
             typer.echo("no RAW files found", err=True)
@@ -1421,7 +1790,9 @@ def info(
             typer.echo(_render_info_file(payload))
         return
 
-    # Directory/multi-input mode: vertical KV summary of the folder(s).
+    # Directory/multi-input mode.
+    dim = _parse_by_dim(by)
+
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
         typer.echo("no RAW files found", err=True)
@@ -1451,95 +1822,9 @@ def info(
         typer.echo(json.dumps(payload, ensure_ascii=False))
         return
 
-    typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
+    if dim is None:
+        typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
+    else:
+        lens_top = 999_999 if more else top
+        typer.echo(_render_info_by(stats_data, dim, top=lens_top, where=where))
 
-
-# --- stats command (OPTIONAL addon) ----------------------------------------
-# Everything below this divider (down to the next `# ---` divider, if any)
-# is the optional `stats` command. ls / extract / render / info do NOT depend
-# on it. To drop the addon entirely, delete this block AND the
-# `from rawkit.stats import ...` line near the top of this file AND
-# `src/rawkit/stats.py`.
-
-@app.command()
-def stats(
-    paths: list[Path] = typer.Argument(
-        None,
-        help="Files or directories to aggregate over. Defaults to current "
-             "directory. Directories are listed top-level only unless -R.",
-    ),
-    where: str = typer.Option(
-        "",
-        "--where",
-        "-w",
-        metavar="EXPR",
-        help="Filter records by an EXIF predicate (same DSL as `ls --where`). "
-             "Examples: 'iso>3200', 'date>=\"2024-01-01\" and model~\"R5\"'.",
-    ),
-    by: str = typer.Option(
-        "",
-        "--by",
-        metavar="DIMS",
-        help="Comma-separated list of dimensions to break down by. Default = "
-             "'month'. Multiple = stacked sections. Valid: model / lens / "
-             "maker / orientation / iso / aperture (alias: fnumber) / focal / "
-             "hour / year / month / day. Field names match `--where`.",
-    ),
-    top: int = typer.Option(
-        5,
-        "--top",
-        metavar="N",
-        help="Top-N truncation for the 'lens' dimension (the only one whose "
-             "key cardinality can blow up). Other dimensions ignore this. "
-             "Use --more for the full list.",
-    ),
-    more: bool = typer.Option(
-        False,
-        "--more",
-        help="Show all lenses in the 'lens' dimension (overrides --top).",
-    ),
-    recursive: bool = typer.Option(
-        False,
-        "--recursive",
-        "-R",
-        help="Recurse into subdirectories (default is top-level only).",
-    ),
-    as_json: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit full structured aggregation as JSON (always full, regardless "
-             "of --by / --top / --more). Suitable for jq / scripts.",
-    ),
-) -> None:
-    """Aggregate EXIF + filesize across a set of RAW files.
-
-    Default output: Summary + monthly density. For other dimensions or to
-    combine several, pass --by:
-
-    \b
-      rawkit stats samples/                          # Summary + month
-      rawkit stats samples/ --by year                # Summary + year only
-      rawkit stats samples/ --by camera,lens,month   # three sections
-      rawkit stats samples/ --where 'iso>=3200'      # subset stats
-
-    Output is on stdout (data); errors and 'no records' notices on stderr.
-    """
-    inputs = paths if paths else [Path(".")]
-    raws = _collect_raws(inputs, recursive=recursive)
-    if not raws:
-        typer.echo("no RAW files found", err=True)
-        raise typer.Exit(code=1)
-
-    raws_after_where = _filter_paths_by_where(raws, where)
-    if not raws_after_where:
-        typer.echo("no records matched --where", err=True)
-        raise typer.Exit(code=1)
-
-    _emit_stats_view(
-        raws_after_where,
-        where=where,
-        by=by,
-        top=top,
-        more=more,
-        as_json=as_json,
-    )
