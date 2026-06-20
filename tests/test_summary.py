@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -73,17 +74,23 @@ def test_summary_dir_kv_view(tmp_path, fake_exif) -> None:
     assert "Distribution" not in out
 
 
-def test_summary_dir_json_includes_path(tmp_path, fake_exif) -> None:
-    """JSON keeps a `path` key (machine-readable consumers may want it);
-    the human view no longer shows a Path row."""
+def test_summary_dir_json_includes_paths(tmp_path, fake_exif) -> None:
+    """JSON top-level `paths` lists every absolute path summary covered —
+    the honest answer to 'what did you include?'. Machine consumers can
+    derive any scope/parent/coverage they want from this list."""
     (tmp_path / "a.ARW").write_bytes(b"x")
+    (tmp_path / "b.CR3").write_bytes(b"x")
 
     result = runner.invoke(app, ["summary", str(tmp_path), "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["path"].rstrip("/") == str(tmp_path).rstrip("/")
-    assert payload["path"].endswith("/")
-    assert payload["total"]["count"] == 1
+    assert "path" not in payload  # old singular key is gone
+    assert isinstance(payload["paths"], list)
+    assert len(payload["paths"]) == 2
+    for p in payload["paths"]:
+        assert os.path.isabs(p)
+        assert p.endswith((".ARW", ".CR3"))
+    assert payload["total"]["count"] == 2
 
 
 def test_summary_filter_row_shown_when_where(tmp_path, fake_exif) -> None:

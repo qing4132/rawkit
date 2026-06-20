@@ -593,31 +593,6 @@ def _format_extent(lo: Any, hi: Any, fmt) -> str:
     return f"{fmt(lo)} \u2013 {fmt(hi)}"
 
 
-def _summary_path_display(inputs: list[Path]) -> str:
-    """One-line answer to 'where are these files?' for summary's Path row.
-
-    Always resolves to an absolute common parent directory, abbreviates
-    $HOME to ~, and ends with /. The file count belongs to the File row;
-    we don't repeat it here. One unified rule across:
-      - 1 file arg → that file's parent dir
-      - 1 dir arg → that dir resolved
-      - N file paths from a pipe → their common parent
-      - mixed file + dir args → common parent of everything
-    """
-    if not inputs:
-        return "-"
-    abs_strs = [str(p.resolve()) for p in inputs]
-    try:
-        common = os.path.commonpath(abs_strs)
-    except ValueError:  # disjoint roots (e.g. different drives)
-        return "multiple roots"
-    parent = common if os.path.isdir(common) else os.path.dirname(common) or "/"
-    home = os.path.expanduser("~")
-    if parent == home or parent.startswith(home + os.sep):
-        parent = "~" + parent[len(home):]
-    return parent.rstrip("/") + "/"
-
-
 def _format_enum_inline(items: list[dict[str, Any]], n_distinct: int, max_list: int = 3) -> str:
     """List names directly when count is small; otherwise show count + top-N + '+M others'."""
     if not items:
@@ -2029,7 +2004,10 @@ def summary(
     stats_data = build_stats(paired_records, paired_paths)
 
     if as_json:
-        payload = {"path": _summary_path_display(inputs), **stats_data}
+        payload = {
+            "paths": [str(p.resolve()) for p in paired_paths],
+            **stats_data,
+        }
         typer.echo(json.dumps(payload, ensure_ascii=False))
         return
 
