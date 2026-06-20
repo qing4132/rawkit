@@ -18,7 +18,7 @@ Requires Python 3.14+.
 ## `ls` — list RAWs as a table
 
 ```bash
-rawkit ls [PATHS...] [-w EXPR] [-s KEY,...] [-r] [-R] [--json]
+rawkit ls [PATHS...] [-w EXPR] [-s KEY,...] [-r] [-R] [--json | --path]
 ```
 
 Default columns: `file datetime model lens focal aperture shutter bias iso`. Default sort: `datetime` ascending.
@@ -31,12 +31,14 @@ Default columns: `file datetime model lens focal aperture shutter bias iso`. Def
 | `-r / --reverse` | reverse sort |
 | `-R / --recursive` | recurse into subdirs |
 | `--json` | JSONL output (one object per file) |
+| `--path` | one absolute path per line (pairs with `rawkit reveal`, `xargs`, `fzf`). Mutually exclusive with `--json` |
 
 ```bash
-rawkit ls ~/Pictures/2024-trip                        # whole directory
-rawkit ls *.CR3 -s iso -r                             # by ISO descending
-rawkit ls . -w 'iso>3200 and lens~"50"'               # filter
-rawkit ls . --json | jq '.path'                       # pipe to jq
+rawkit ls ~/Pictures/2024-trip                          # whole directory
+rawkit ls *.CR3 -s iso -r                               # by ISO descending
+rawkit ls . -w 'iso>3200 and lens~"50"'                 # filter
+rawkit ls . --json | jq '.path'                         # pipe to jq
+rawkit ls -R -w 'rating>=4' --path | rawkit reveal      # show keepers in Finder
 ```
 
 ---
@@ -233,6 +235,33 @@ rawkit organize ~/dump -o ~/keepers -R -w 'rating>=4'
 
 # always preview a new layout first
 rawkit organize ~/Pictures -o ~/sorted --by month -n
+```
+
+---
+
+## `reveal` — open Finder window(s) with files selected (macOS)
+
+```bash
+rawkit reveal PATH...
+rawkit reveal -                    # read paths from stdin
+rawkit ls -w '...' --path | rawkit reveal   # auto-detect pipe
+```
+
+Pure action command — no `--where`, no `--sort`, no filter logic. It takes paths and reveals them. Filtering / sorting / picking is `ls`'s job (or the shell's, via `head` / `sed` / `fzf`).
+
+Paths sharing a parent directory are grouped into one Finder window with all of them selected; different parents open separate windows. Missing files are reported to stderr but don't abort the rest.
+
+macOS only — uses `osascript` + Finder's `reveal`. Non-macOS exits 2 with a friendly message.
+
+```bash
+# show all 4★+ shots in Finder, grouped by their actual folder
+rawkit ls -R -w 'rating>=4' --path | rawkit reveal
+
+# show top-5 highest-ISO files
+rawkit ls -R -w 'iso>=3200' -s iso -r --path | head -5 | rawkit reveal
+
+# interactive multi-select with fzf (brew install fzf)
+rawkit ls -R --path | fzf -m | rawkit reveal
 ```
 
 ---

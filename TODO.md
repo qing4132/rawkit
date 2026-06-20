@@ -4,6 +4,7 @@ Personal notes on what's deferred and what I deliberately won't do. Not a public
 
 ## Deferred (might do, no plan)
 
+- **`info` reading stdin paths** — for the `ls -s iso -r --path | head -10 | info` case (summarize a manually-curated subset, e.g. "top-N by sort"). `info -w` already covers value-based filtering; this is only useful when the upstream selection is sort-then-take or fzf-picked. ~20 lines if needed. Genuinely small niche but actually hit during dogfood.
 - **`info --by FOO -l`** — list file paths under each bucket. Solves "I see bucket ≤100 ISO has 4 files, which 4?" without re-typing `ls -w`. ~30 lines, low risk.
 - **`info --by A,B`** — multi-dim nested breakdown (mirrors `organize --by A,B`'s directory chain). Currently exits 2.
 - **35mm-equivalent focal length** — `focal` is raw lens value, no crop-factor normalization. Would need maker→crop table or read `FocalLengthIn35mmFormat` EXIF tag. Adds a semantic fork ("does `--where focal>=70` mean raw or equivalent?") so not done lightly.
