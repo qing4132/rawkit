@@ -665,7 +665,7 @@ def _format_bool_pairs(records: list[dict[str, Any]], field: str,
 
 
 def _render_info_dir(stats: dict[str, Any], records: list[dict[str, Any]],
-                     path_display: str, where: str) -> str:
+                     where: str) -> str:
     """Vertical KV description of a folder, parallel to single-file info.
 
     Same shape as info FILE: 'this is what you're looking at', not a
@@ -748,7 +748,7 @@ def _render_info_dir(stats: dict[str, Any], records: list[dict[str, Any]],
     flash_line = _format_bool_pairs(records, "flash", "on", "off")
     gps_line = _format_bool_pairs(records, "gps", "yes", "no")
 
-    rows: list[tuple[str, str]] = [("Path", path_display)]
+    rows: list[tuple[str, str]] = []
     if where:
         rows.append(("Filter", where))
     rows.extend([
@@ -2027,15 +2027,14 @@ def summary(
             paired_paths.append(p)
 
     stats_data = build_stats(paired_records, paired_paths)
-    path_display = _summary_path_display(inputs)
 
     if as_json:
-        payload = {"path": path_display, **stats_data}
+        payload = {"path": _summary_path_display(inputs), **stats_data}
         typer.echo(json.dumps(payload, ensure_ascii=False))
         return
 
     if dim is None:
-        typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
+        typer.echo(_render_info_dir(stats_data, paired_records, where=where))
     else:
         typer.echo(_render_info_by(stats_data, dim))
 

@@ -116,7 +116,6 @@ Default = a scalar KV block (count, total size, date range, top maker/camera/len
 ### Default KV block
 
 ```
-Path          ~/Pictures/2024-trip
 File          29 RAWs (1.53 GiB)
 Date range    2024-06-01 → 2024-06-15  (15 days)
 Hour          06–09, 14–19

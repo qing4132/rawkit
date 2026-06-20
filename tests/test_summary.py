@@ -56,7 +56,9 @@ def test_summary_dir_kv_view(tmp_path, fake_exif) -> None:
     result = runner.invoke(app, ["summary", str(tmp_path)])
     assert result.exit_code == 0
     out = result.stdout
-    assert "Path" in out
+    # No Path row — its presence falsely implied "this dir contains
+    # exactly these RAWs", which is wrong under --where or a pipe.
+    assert not out.startswith("Path")
     assert "File" in out
     assert "RAW" in out
     assert "Date range" in out
@@ -72,12 +74,13 @@ def test_summary_dir_kv_view(tmp_path, fake_exif) -> None:
 
 
 def test_summary_dir_json_includes_path(tmp_path, fake_exif) -> None:
+    """JSON keeps a `path` key (machine-readable consumers may want it);
+    the human view no longer shows a Path row."""
     (tmp_path / "a.ARW").write_bytes(b"x")
 
     result = runner.invoke(app, ["summary", str(tmp_path), "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    # Same resolve+trailing-slash rule as the human view.
     assert payload["path"].rstrip("/") == str(tmp_path).rstrip("/")
     assert payload["path"].endswith("/")
     assert payload["total"]["count"] == 1
@@ -171,48 +174,24 @@ def test_summary_pipe_with_by(tmp_path, fake_exif) -> None:
     assert "100%" in result.stdout
 
 
-# --- path row truncation ----------------------------------------------------
+# --- no Path row -----------------------------------------------------------
 
-def test_summary_pipe_path_row_uses_common_parent(tmp_path, fake_exif) -> None:
-    """Piping N file paths must not dump all basenames into the Path row;
-    it should collapse to the common parent directory, with a trailing /."""
-    for name in ("a.ARW", "b.CR3", "c.NEF", "d.RAF", "e.DNG"):
-        (tmp_path / name).write_bytes(b"x")
-    stdin = "\n".join(str(tmp_path / n) for n in
-                     ("a.ARW", "b.CR3", "c.NEF", "d.RAF", "e.DNG")) + "\n"
-
-    result = runner.invoke(app, ["summary", "-"], input=stdin)
-    assert result.exit_code == 0
-    path_rows = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
-    assert len(path_rows) == 1
-    row = path_rows[0]
-    # Single common-parent directory, trailing slash. Count is NOT here
-    # (it's in the File row); no basenames leak through.
-    assert row.rstrip().endswith("/")
-    assert "a.ARW" not in row
-    assert "b.CR3" not in row
-    assert "paths" not in row
-    assert "RAW" not in row.replace("RAWs", "")  # belongs to File row
-
-
-def test_summary_path_row_unified_across_inputs(tmp_path, fake_exif) -> None:
-    """All four input styles (1 file, 1 dir, N piped files, mixed) collapse
-    to the SAME Path row when they refer to the same scope."""
+def test_summary_has_no_path_row_under_any_input(tmp_path, fake_exif) -> None:
+    """The Path row used to falsely imply 'this dir contains exactly these
+    RAWs'. After --where / pipe filtering that's almost never true, so the
+    row was removed. It must not come back under any input style."""
     a = tmp_path / "a.ARW"
     b = tmp_path / "b.CR3"
     a.write_bytes(b"x")
     b.write_bytes(b"x")
 
-    def path_row(result):
-        rows = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
-        assert len(rows) == 1
-        return rows[0]
-
-    r_dir = runner.invoke(app, ["summary", str(tmp_path)])
-    r_one_file = runner.invoke(app, ["summary", str(a)])
-    r_two_files = runner.invoke(app, ["summary", str(a), str(b)])
-    r_piped = runner.invoke(app, ["summary", "-"], input=f"{a}\n{b}\n")
-
-    rows = {path_row(r_dir), path_row(r_one_file),
-            path_row(r_two_files), path_row(r_piped)}
-    assert len(rows) == 1, f"Path rows differ across input styles: {rows}"
+    for cmd, kwargs in [
+        (["summary", str(tmp_path)], {}),
+        (["summary", str(a)], {}),
+        (["summary", str(a), str(b)], {}),
+        (["summary", "-"], {"input": f"{a}\n{b}\n"}),
+    ]:
+        result = runner.invoke(app, cmd, **kwargs)
+        assert result.exit_code == 0, cmd
+        for line in result.stdout.splitlines():
+            assert not line.startswith("Path"), f"unexpected Path row from {cmd}"
