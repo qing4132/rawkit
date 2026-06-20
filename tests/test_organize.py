@@ -419,3 +419,51 @@ def test_organize_prune_dry_run_simulates(tmp_path, fake_exif) -> None:
     # But the simulation reports the planned move and the planned rmdir.
     assert "[dry-run]" in result.stderr
     assert "rmdir" in result.stderr
+
+
+def test_organize_prune_sweeps_ds_store(tmp_path, fake_exif) -> None:
+    """A directory containing only the macOS .DS_Store metadata file
+    counts as effectively empty: the .DS_Store is swept and the dir
+    rmdir'd as part of the prune."""
+    src = tmp_path / "src"
+    src.mkdir()
+    shoot = src / "shoot"
+    shoot.mkdir()
+    (shoot / "a.ARW").write_bytes(b"x")
+    (shoot / ".DS_Store").write_bytes(b"\x00\x00\x00")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        ["organize", str(src), "-R", "-o", str(out), "--by", "month", "--prune"],
+    )
+    assert result.exit_code == 0
+    assert (out / "2024-01" / "a.ARW").exists()
+    # shoot/ contained only .DS_Store after the move → pruned, .DS_Store gone.
+    assert not shoot.exists()
+    assert src.exists()
+
+
+def test_organize_prune_skips_dir_with_user_file_beside_ds_store(
+    tmp_path, fake_exif
+) -> None:
+    """A user file (notes.txt) keeps the dir alive even when .DS_Store
+    is also present — .DS_Store sweeping isn't an excuse to delete dirs
+    with real content."""
+    src = tmp_path / "src"
+    src.mkdir()
+    mixed = src / "mixed"
+    mixed.mkdir()
+    (mixed / "a.ARW").write_bytes(b"x")
+    (mixed / "notes.txt").write_bytes(b"keep me")
+    (mixed / ".DS_Store").write_bytes(b"\x00")
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        ["organize", str(src), "-R", "-o", str(out), "--by", "month", "--prune"],
+    )
+    assert result.exit_code == 0
+    assert mixed.exists()
+    assert (mixed / "notes.txt").exists()
+    assert (mixed / ".DS_Store").exists()  # left alone since dir wasn't pruned

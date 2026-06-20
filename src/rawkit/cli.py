@@ -1461,6 +1461,11 @@ def _sanitize_dir_name(name: str) -> str:
 # write next to the RAW. Lowercase-compared.
 _SIDECAR_SUFFIXES: frozenset[str] = frozenset({".xmp", ".jpg", ".jpeg"})
 
+# OS-generated cruft files that don't count as 'real' directory contents
+# when deciding whether a dir is prune-eligible. We sweep these out before
+# rmdir-ing the parent.
+_PRUNE_JUNK_NAMES: frozenset[str] = frozenset({".DS_Store"})
+
 
 def _find_sidecars(raw: Path) -> list[Path]:
     """Find same-stem sidecars (XMP / JPG) sitting next to the RAW.
@@ -1542,26 +1547,42 @@ def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
                 typer.echo(f"prune {current}: failed \u2014 {e}", err=True)
                 break
 
-            if simulated:
-                all_gone = True
-                for e in entries:
-                    try:
-                        er = e.resolve()
-                    except OSError:
-                        all_gone = False
-                        break
+            # Classify entries: real content (blocks pruning) vs junk
+            # (.DS_Store, swept before rmdir) vs already-gone
+            # (simulated-moved or previously-pruned subdir).
+            blocking = False
+            junk: list[Path] = []
+            for e in entries:
+                if e.name in _PRUNE_JUNK_NAMES and e.is_file():
+                    junk.append(e)
+                    continue
+                try:
+                    er = e.resolve()
+                except OSError:
+                    blocking = True
+                    break
+                if simulated:
                     if er in sim_moved or er in pruned:
                         continue
-                    all_gone = False
-                    break
-                if not all_gone:
-                    break
+                else:
+                    if er in pruned:
+                        continue
+                blocking = True
+                break
+
+            if blocking:
+                break
+
+            if simulated:
                 typer.echo(f"[dry-run] rmdir {current}", err=True)
                 pruned.add(current)
                 current = current.parent
             else:
-                if entries:
-                    break
+                for j in junk:
+                    try:
+                        j.unlink()
+                    except OSError:
+                        pass  # rmdir below will report if it still fails
                 try:
                     current.rmdir()
                 except OSError as e:
