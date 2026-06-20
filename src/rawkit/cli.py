@@ -11,11 +11,16 @@ from typing import Any, Iterable
 
 import typer
 
+from rawkit.aggregate import build_stats, _bytes_human, _hours_inline
 from rawkit.exif import safe_batch_read
 from rawkit.extract import ExtractError, extract_jpeg
 from rawkit.query import QueryError, compile_where
 from rawkit.render import RenderError, render as render_raw, suffix_for
-from rawkit.stats import build_stats, render as render_stats, supported_dimensions
+# OPTIONAL: the stats command and its renderer. ls / extract / render / info
+# do NOT import from rawkit.stats. If you want to drop the addon, delete
+# the import below AND the entire `# --- stats command (optional) ---`
+# block further down; nothing else cares.
+from rawkit.stats import render as render_stats, supported_dimensions
 
 app = typer.Typer(
     help="rawkit — RAW photography swiss-army CLI",
@@ -440,18 +445,6 @@ def _emit_jsonl(records: Iterable[dict[str, Any]]) -> None:
         typer.echo(json.dumps(r, ensure_ascii=False))
 
 
-def _bytes_human(n: int) -> str:
-    if n < 1024:
-        return f"{n} B"
-    x = float(n)
-    units = ["KiB", "MiB", "GiB", "TiB"]
-    for u in units:
-        x /= 1024.0
-        if x < 1024.0 or u == units[-1]:
-            return f"{x:.2f} {u}" if x < 10 else f"{x:.1f} {u}"
-    return f"{n} B"
-
-
 def _parse_by_dimensions(by: str) -> list[str] | None:
     if not by:
         return None
@@ -623,8 +616,6 @@ def _render_info_dir(stats: dict[str, Any], records: list[dict[str, Any]],
     distribution / bar-chart analysis. For drill-down per dimension, use
     `rawkit stats --by ...`.
     """
-    from rawkit.stats import _hours_inline
-
     total = stats.get("total", {})
     if total.get("count", 0) == 0:
         return "no records"
@@ -1370,7 +1361,7 @@ def cmd_render(
         raise typer.Exit(code=1)
 
 
-# --- stats command ----------------------------------------------------------
+# --- info command -----------------------------------------------------------
 
 @app.command()
 def info(
@@ -1462,6 +1453,13 @@ def info(
 
     typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
 
+
+# --- stats command (OPTIONAL addon) ----------------------------------------
+# Everything below this divider (down to the next `# ---` divider, if any)
+# is the optional `stats` command. ls / extract / render / info do NOT depend
+# on it. To drop the addon entirely, delete this block AND the
+# `from rawkit.stats import ...` line near the top of this file AND
+# `src/rawkit/stats.py`.
 
 @app.command()
 def stats(

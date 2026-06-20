@@ -1,4 +1,10 @@
-"""Tests for the rawkit.stats aggregator + the `rawkit stats` CLI."""
+"""Tests for the OPTIONAL `rawkit stats` command and its bar-chart renderer.
+
+This file is the addon's test surface. ls / extract / render / info are
+tested elsewhere and do NOT depend on rawkit.stats. Deleting this file
+along with `src/rawkit/stats.py` and the stats block in `cli.py` leaves
+the rest of the suite working untouched.
+"""
 
 from __future__ import annotations
 
@@ -8,22 +14,19 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from rawkit.aggregate import build_stats
 from rawkit.cli import app
 from rawkit.stats import (
-    build_stats,
+    render,
     render_by,
     render_default,
     supported_dimensions,
 )
 
-
 runner = CliRunner()
 
 
-# --- build_stats ----------------------------------------------------------
-
 def _record(**kw) -> dict:
-    """Helper: a record with sensible defaults that build_stats can ingest."""
     base = {
         "path": kw.pop("path", "fake.RAW"),
         "datetime": "2024-06-15 12:00:00",
@@ -40,140 +43,7 @@ def _record(**kw) -> dict:
     return base
 
 
-def _fake_paths_with_size(tmp_path: Path, names: list[str], size: int = 1024) -> list[Path]:
-    """Create N small files in tmp_path so build_stats can read st_size."""
-    out: list[Path] = []
-    for n in names:
-        p = tmp_path / n
-        p.write_bytes(b"\0" * size)
-        out.append(p)
-    return out
-
-
-def test_empty_records_returns_total_zero() -> None:
-    s = build_stats([], [])
-    assert s["total"]["count"] == 0
-
-
-def test_total_counts_and_sums(tmp_path) -> None:
-    records = [_record(path=str(tmp_path / "a.ARW"), iso=100),
-               _record(path=str(tmp_path / "b.ARW"), iso=200)]
-    paths = _fake_paths_with_size(tmp_path, ["a.ARW", "b.ARW"], size=2048)
-    s = build_stats(records, paths)
-    assert s["total"]["count"] == 2
-    assert s["total"]["bytes"] == 4096
-    assert s["total"]["bytes_human"].endswith("KiB")
-
-
-def test_date_range_and_days_spanned() -> None:
-    records = [
-        _record(date="2024-01-01"),
-        _record(date="2024-03-15"),
-        _record(date="2024-02-01"),
-    ]
-    s = build_stats(records, [])
-    assert s["total"]["date_range"] == ["2024-01-01", "2024-03-15"]
-    # Jan 1 → Mar 15 inclusive (2024 is a leap year so Feb has 29 days):
-    # 31 (Jan) + 29 (Feb) + 15 (Mar) = 75
-    assert s["total"]["days_spanned"] == 75
-
-
-def test_model_distribution_count_and_share() -> None:
-    records = [
-        _record(model="EOS R5"),
-        _record(model="EOS R5"),
-        _record(model="ILCE-7RM4A"),
-        _record(model="X-E5"),
-    ]
-    s = build_stats(records, [])
-    by_model = s["by_model"]
-    # Order: count desc, then key asc
-    assert [m["key"] for m in by_model] == ["EOS R5", "ILCE-7RM4A", "X-E5"]
-    assert by_model[0]["count"] == 2
-    assert by_model[0]["share"] == 0.5
-
-
-def test_iso_buckets_skip_empty_ones() -> None:
-    records = [_record(iso=100), _record(iso=200), _record(iso=3200)]
-    s = build_stats(records, [])
-    keys = [b["key"] for b in s["by_iso_bucket"]]
-    # ≤100, 101–200, 1601–3200 — the others (which have count 0) are omitted
-    assert keys == ["≤100", "101–200", "1601–3200"]
-
-
-def test_aperture_bucket_snaps_to_standard() -> None:
-    # 2.7 should snap to f/2.8 (within 6% tolerance)
-    s = build_stats([_record(fnumber=2.7), _record(fnumber=4.0)], [])
-    # Bucket key is 'by_fnumber_bucket' to match the DSL field name.
-    keys = [b["key"] for b in s["by_fnumber_bucket"]]
-    assert "f/2.8" in keys
-    assert "f/4" in keys
-
-
-def test_focal_buckets() -> None:
-    records = [
-        _record(focal=14),     # <20mm ultra-wide
-        _record(focal=50),     # 35-70mm standard
-        _record(focal=200),    # 200-600mm long (200 inclusive in next bucket)
-    ]
-    s = build_stats(records, [])
-    keys = [b["key"] for b in s["by_focal_bucket"]]
-    assert "<20mm ultra-wide" in keys
-    assert "35-70mm standard" in keys
-    assert "200-600mm long" in keys
-
-
-def test_hour_buckets() -> None:
-    records = [
-        _record(time="08:30:00"),   # 08
-        _record(time="16:00:00"),   # 16
-        _record(time="16:45:00"),   # 16
-    ]
-    s = build_stats(records, [])
-    by_hour = {b["key"]: b["count"] for b in s["by_hour_bucket"]}
-    assert by_hour.get("08") == 1
-    assert by_hour.get("16") == 2
-
-
-def test_month_buckets_chronological() -> None:
-    records = [
-        _record(date="2024-03-15"),
-        _record(date="2024-01-20"),
-        _record(date="2024-03-01"),
-        _record(date="2024-02-10"),
-    ]
-    s = build_stats(records, [])
-    keys = [b["key"] for b in s["by_month_bucket"]]
-    assert keys == ["2024-01", "2024-02", "2024-03"]
-
-
-def test_year_and_day_buckets_chronological() -> None:
-    """`--by date` has three coarsenings: year (YYYY), month (YYYY-MM),
-    day (YYYY-MM-DD). All sort chronologically."""
-    records = [
-        _record(date="2024-03-15"),
-        _record(date="2023-12-31"),
-        _record(date="2024-03-15"),
-        _record(date="2024-03-16"),
-    ]
-    s = build_stats(records, [])
-    years = [b["key"] for b in s["by_year_bucket"]]
-    assert years == ["2023", "2024"]
-    days = [(b["key"], b["count"]) for b in s["by_day_bucket"]]
-    assert days == [("2023-12-31", 1), ("2024-03-15", 2), ("2024-03-16", 1)]
-
-
-def test_lensless_count() -> None:
-    # 1 lensless, 1 with lens
-    s = build_stats(
-        [_record(lens=None), _record(lens="RF50mm F1.8 STM")],
-        [],
-    )
-    assert s["total"]["n_lensless_files"] == 1
-    assert s["total"]["n_lenses"] == 1
-
-
-# --- render -----------------------------------------------------------------
+# --- render API ------------------------------------------------------------
 
 def test_render_default_with_where_shows_caption() -> None:
     records = [_record(model="EOS R5", iso=400)]
@@ -195,7 +65,6 @@ def test_render_by_month_has_chrono_order() -> None:
     ]
     s = build_stats(records, [])
     out = render_by(s, "month")
-    # The earlier month should appear above the later one
     assert out.index("2024-01") < out.index("2024-03")
 
 
@@ -215,25 +84,6 @@ def test_supported_dimensions_includes_expected() -> None:
         assert d in dims
 
 
-def test_build_stats_includes_by_maker_and_orientation() -> None:
-    records = [
-        _record(model="EOS R5", maker="Canon"),
-        _record(model="EOS R5", maker="Canon"),
-        _record(model="ILCE-7RM4A", maker="SONY"),
-    ]
-    # orientation isn't in _record's defaults — add explicitly
-    records[0]["orientation"] = "landscape"
-    records[1]["orientation"] = "portrait"
-    records[2]["orientation"] = "landscape"
-    s = build_stats(records, [])
-
-    makers = {m["key"]: m["count"] for m in s["by_maker"]}
-    assert makers == {"Canon": 2, "SONY": 1}
-
-    orients = {o["key"]: o["count"] for o in s["by_orientation"]}
-    assert orients == {"landscape": 2, "portrait": 1}
-
-
 def test_render_by_fnumber_works() -> None:
     records = [_record(fnumber=2.8), _record(fnumber=4.0), _record(fnumber=2.8)]
     s = build_stats(records, [])
@@ -244,10 +94,6 @@ def test_render_by_fnumber_works() -> None:
 
 
 def test_render_by_aperture_matches_fnumber() -> None:
-    """--by aperture and --by fnumber show the SAME bucket order (small
-    f-number first, i.e. f/1.4 → f/22). The photographer-direction inversion
-    of aperture lives ONLY in --where to avoid cognitive load of having two
-    display directions for the same data."""
     records = [_record(fnumber=2.8), _record(fnumber=4.0), _record(fnumber=11.0)]
     s = build_stats(records, [])
     assert render_by(s, "aperture") == render_by(s, "fnumber").replace(
@@ -255,12 +101,116 @@ def test_render_by_aperture_matches_fnumber() -> None:
     )
 
 
-# --- CLI surface ------------------------------------------------------------
+# --- summary inline rendering ---------------------------------------------
+
+def test_render_default_is_one_line_distribution() -> None:
+    records = [
+        _record(model="EOS R5", iso=100, lens="RF24-105", date="2024-01-15"),
+        _record(model="EOS R5", iso=3200, lens="RF50",   date="2024-02-10"),
+        _record(model="X-E5",   iso=400,  lens="XF33",   date="2024-02-20"),
+    ]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "Summary" not in out
+    assert "──────" not in out
+    assert "Distribution" not in out
+    assert "By camera" not in out
+    assert "█" not in out
+    assert "%" not in out
+    assert "year" in out
+    assert "month" in out
+    assert "day" in out
+    assert "ISO" in out
+    assert "100 – 3200" in out
+
+
+def test_render_with_explicit_dim_uses_bars() -> None:
+    records = [
+        _record(model="EOS R5", iso=100),
+        _record(model="EOS R5", iso=400),
+        _record(model="X-E5",   iso=3200),
+    ]
+    s = build_stats(records, [])
+    out = render(s, dims=["camera"])
+    assert "By camera" in out
+    assert "█" in out
+    assert "%" in out
+
+
+def test_summary_includes_year_month_day_counts() -> None:
+    records = [
+        _record(date="2024-01-15"),
+        _record(date="2024-02-10"),
+        _record(date="2024-02-20"),
+        _record(date="2025-08-01"),
+    ]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "1 year," in out
+    assert "6 months," in out
+    assert "17 days" in out
+
+
+def test_summary_iso_range_is_real_min_max() -> None:
+    records = [_record(iso=64), _record(iso=12800), _record(iso=400)]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "ISO" in out
+    assert "64 – 12800" in out
+
+
+def test_summary_aperture_range_uses_f_notation() -> None:
+    records = [_record(fnumber=1.4), _record(fnumber=11.0), _record(fnumber=2.8)]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "Aperture" in out
+    assert "f/1.4 – f/11" in out
+
+
+def test_summary_shutter_range_uses_photographer_format() -> None:
+    records = [_record(shutter=0.001), _record(shutter=2.0)]
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "Shutter" in out
+    assert "1/1000" in out
+    assert "2s" in out
+
+
+def test_summary_camera_top_3_plus_others() -> None:
+    records = [
+        _record(model="EOS R5"),
+        _record(model="EOS R5"),
+        _record(model="EOS R5"),
+        _record(model="X-E5"),
+        _record(model="Z5_2"),
+        _record(model="X2D 100C"),
+        _record(model="GR III"),
+    ]
+    s = build_stats(records, [])
+    out = render_default(s)
+    cam_row = next(ln for ln in out.splitlines() if ln.startswith("Cameras"))
+    assert cam_row.split()[-1] == "5"
+    assert "EOS R5" not in out
+    assert "others" not in out
+
+
+def test_summary_orientation_lists_both_when_only_two() -> None:
+    records = [
+        _record(model="X", lens="L1"),
+        _record(model="X", lens="L2"),
+    ]
+    records[0]["orientation"] = "landscape"
+    records[1]["orientation"] = "portrait"
+    s = build_stats(records, [])
+    out = render_default(s)
+    assert "1 (landscape), 1 (portrait)" in out
+    assert "+0 others" not in out
+
+
+# --- CLI surface ----------------------------------------------------------
 
 @pytest.fixture
 def fake_exif(monkeypatch):
-    """Make safe_batch_read return a predictable EXIF set without exiftool."""
-
     def fake(paths):
         return [
             {
@@ -283,156 +233,16 @@ def fake_exif(monkeypatch):
     return fake
 
 
-def test_render_default_is_one_line_distribution() -> None:
-    """Default view (no --by): a single consolidated Summary block —
-    everything embedded inline (date range expanded to year/month/day,
-    enums as top-3+others, numerics as min–max extents). No 'Distribution'
-    section, no bars, no percentages."""
-    records = [
-        _record(model="EOS R5", iso=100, lens="RF24-105", date="2024-01-15"),
-        _record(model="EOS R5", iso=3200, lens="RF50",   date="2024-02-10"),
-        _record(model="X-E5",   iso=400,  lens="XF33",   date="2024-02-20"),
-    ]
-    s = build_stats(records, [])
-    out = render_default(s)
-    # No header / hrule
-    assert "Summary" not in out
-    assert "──────" not in out
-    # No separate Distribution section
-    assert "Distribution" not in out
-    # NOT the detailed section titles
-    assert "By camera" not in out
-    assert "By ISO" not in out
-    assert "By month" not in out
-    # No bars or percentages in default view
-    assert "█" not in out
-    assert "%" not in out
-    # Date range carries independent year/month/day distinct counts
-    assert "year" in out
-    assert "month" in out
-    assert "day" in out
-    # Cameras / Lenses are bare counts (no top-3 expansion in this row)
-    assert "EOS R5" not in out
-    assert "RF50" not in out
-    # Makers row is gone
-    assert "Makers" not in out
-    # Numeric extents shown
-    assert "ISO" in out
-    assert "100 – 3200" in out
-
-
-def test_render_with_explicit_dim_uses_bars() -> None:
-    """`--by foo` switches to DETAILED mode with bar charts."""
-    from rawkit.stats import render
-    records = [
-        _record(model="EOS R5", iso=100),
-        _record(model="EOS R5", iso=400),
-        _record(model="X-E5",   iso=3200),
-    ]
-    s = build_stats(records, [])
-    out = render(s, dims=["camera"])
-    assert "By camera" in out
-    assert "█" in out  # bars present in detailed mode
-    assert "%" in out
-
-
-# --- summary inline rendering ---------------------------------------------
-
-def test_summary_includes_year_month_day_counts() -> None:
-    """Date range line carries the span re-measured in three units
-    (years / months / days). All three describe the *same* span
-    independently — not distinct calendar bucket counts."""
-    records = [
-        _record(date="2024-01-15"),
-        _record(date="2024-02-10"),
-        _record(date="2024-02-20"),
-        _record(date="2025-08-01"),
-    ]
-    s = build_stats(records, [])
-    out = render_default(s)
-    # 2024-01-15 → 2025-08-01 = 1 year, 6 months, 17 days
-    # (calendar breakdown that reconstructs the span, not three
-    # independent unit measurements)
-    assert "1 year," in out
-    assert "6 months," in out
-    assert "17 days" in out
-
-
-def test_summary_iso_range_is_real_min_max() -> None:
-    """ISO line uses real numeric min/max, NOT bucket labels like '≤100'."""
-    records = [_record(iso=64), _record(iso=12800), _record(iso=400)]
-    s = build_stats(records, [])
-    out = render_default(s)
-    assert "ISO" in out
-    assert "64 – 12800" in out
-
-
-def test_summary_aperture_range_uses_f_notation() -> None:
-    records = [_record(fnumber=1.4), _record(fnumber=11.0), _record(fnumber=2.8)]
-    s = build_stats(records, [])
-    out = render_default(s)
-    assert "Aperture" in out
-    assert "f/1.4 – f/11" in out
-
-
-def test_summary_shutter_range_uses_photographer_format() -> None:
-    """Fast shutter shown as 1/N, slow as Ns."""
-    records = [_record(shutter=0.001), _record(shutter=2.0)]  # 1/1000, 2s
-    s = build_stats(records, [])
-    out = render_default(s)
-    assert "Shutter" in out
-    assert "1/1000" in out
-    assert "2s" in out
-
-
-def test_summary_camera_top_3_plus_others() -> None:
-    """Cameras row shows only the bare distinct count, no top-3 expansion."""
-    records = [
-        _record(model="EOS R5"),
-        _record(model="EOS R5"),
-        _record(model="EOS R5"),
-        _record(model="X-E5"),
-        _record(model="Z5_2"),
-        _record(model="X2D 100C"),
-        _record(model="GR III"),
-    ]
-    s = build_stats(records, [])
-    out = render_default(s)
-    # 5 distinct cameras, but no model names or '+others' tail.
-    # Don't hard-code padding (key column width depends on the longest
-    # label, which can shift with future renames).
-    cam_row = next(ln for ln in out.splitlines() if ln.startswith("Cameras"))
-    assert cam_row.split()[-1] == "5"
-    assert "EOS R5" not in out
-    assert "others" not in out
-
-
-def test_summary_orientation_lists_both_when_only_two() -> None:
-    """Enum with ≤3 distinct: full list without '+N others' tail."""
-    records = [
-        _record(model="X", lens="L1"),
-        _record(model="X", lens="L2"),
-    ]
-    records[0]["orientation"] = "landscape"
-    records[1]["orientation"] = "portrait"
-    s = build_stats(records, [])
-    out = render_default(s)
-    assert "1 (landscape), 1 (portrait)" in out
-    assert "+0 others" not in out
-
-
 def test_cli_stats_by_dimension(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(app, ["stats", str(tmp_path), "--by", "model"])
     assert result.exit_code == 0
-    # --by suppresses the overview block; only the chosen dim section prints.
     assert "Photos" not in result.stdout
     assert "By camera" in result.stdout
     assert "By month" not in result.stdout
 
 
 def test_cli_stats_by_multiple_dimensions(tmp_path, fake_exif) -> None:
-    """Comma-separated --by produces multiple stacked sections."""
     (tmp_path / "a.ARW").write_bytes(b"x")
     result = runner.invoke(
         app, ["stats", str(tmp_path), "--by", "model,lens,year"]
