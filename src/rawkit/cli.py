@@ -1591,10 +1591,10 @@ def _prune_empty_subdirs(roots: list[Path], moves: list[tuple[Path, Path]], *,
 
 def _parse_by_chain(by: str) -> list[str]:
     """Validate a comma-separated --by chain. Returns ordered dim keys
-    (duplicates rejected). Empty `by` exits 2 — organize requires --by."""
+    (duplicates rejected). Empty `by` returns an empty list — the
+    caller treats this as 'no bucketing, dump files directly into DEST'."""
     if not by:
-        typer.echo("rawkit: organize requires --by DIM[,DIM,...]", err=True)
-        raise typer.Exit(code=2)
+        return []
     raw_dims = [d.strip().lower() for d in by.split(",") if d.strip()]
     if not raw_dims:
         typer.echo("rawkit: --by: empty value", err=True)
@@ -1642,11 +1642,12 @@ def organize(
         "",
         "--by",
         metavar="DIM[,DIM,...]",
-        help="One or more dimensions (comma-separated) used as nested "
-             "directory layers. Same vocabulary as `info --by` and "
-             "`ls --where`: camera/model, lens, maker, orientation, iso, "
-             "aperture (alias: fnumber), focal, shutter, bias, rating, "
-             "hour, year, month, day.",
+        help="Optional. One or more dimensions (comma-separated) used as "
+             "nested directory layers. Omit to dump files flat into DEST "
+             "(useful with --where to cherry-pick a subset). Same vocabulary "
+             "as `info --by` and `ls --where`: camera/model, lens, maker, "
+             "orientation, iso, aperture (alias: fnumber), focal, shutter, "
+             "bias, rating, hour, year, month, day.",
     ),
     recursive: bool = typer.Option(
         False,
@@ -1696,10 +1697,13 @@ def organize(
       rawkit organize ~/dump -o ~/sorted --by month
       rawkit organize ~/dump -o ~/sorted --by year,month
       rawkit organize ~/dump -o ~/sorted --by camera,year -R
+      rawkit organize ~/dump -o ~/keepers -R -w 'rating>=4'  # flat, no --by
 
     \b
     Behaviour:
       - Default action is MOVE; pass --copy to copy instead.
+      - --by is OPTIONAL. Omit it to dump files flat into DEST (useful
+        with --where to cherry-pick a subset by EXIF predicate).
       - Same-stem .xmp / .jpg sidecars move alongside the RAW so LrC
         ratings and develop adjustments aren't orphaned.
       - Files missing the relevant EXIF value land in '_unknown/'.

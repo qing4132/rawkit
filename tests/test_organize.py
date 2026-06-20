@@ -51,13 +51,36 @@ def fake_exif(monkeypatch):
     return fake
 
 
-def test_organize_requires_by(tmp_path, fake_exif) -> None:
-    (tmp_path / "a.ARW").write_bytes(b"x")
+def test_organize_no_by_is_flat(tmp_path, fake_exif) -> None:
+    """Omitting --by drops files directly into DEST with no bucket layer.
+    Useful with --where to cherry-pick a subset."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.ARW").write_bytes(b"x")
+    (src / "b.CR3").write_bytes(b"y")
+    out = tmp_path / "keepers"
+
+    result = runner.invoke(app, ["organize", str(src), "-o", str(out)])
+    assert result.exit_code == 0
+    assert (out / "a.ARW").exists()
+    assert (out / "b.CR3").exists()
+    # No bucket subdirs created.
+    assert sorted(p.name for p in out.iterdir()) == ["a.ARW", "b.CR3"]
+
+
+def test_organize_no_by_with_where_cherry_picks(tmp_path, fake_exif) -> None:
+    (tmp_path / "a.ARW").write_bytes(b"x")           # Canon
+    (tmp_path / "b_sony.ARW").write_bytes(b"y")      # SONY
+    out = tmp_path / "canon-only"
+
     result = runner.invoke(
-        app, ["organize", str(tmp_path), "-o", str(tmp_path / "out")]
+        app,
+        ["organize", str(tmp_path), "-o", str(out), "-w", 'maker~"Canon"'],
     )
-    assert result.exit_code == 2
-    assert "requires --by" in result.stderr
+    assert result.exit_code == 0
+    assert (out / "a.ARW").exists()
+    assert not (out / "b_sony.ARW").exists()
+    assert (tmp_path / "b_sony.ARW").exists()  # untouched
 
 
 def test_organize_unknown_dim(tmp_path, fake_exif) -> None:
