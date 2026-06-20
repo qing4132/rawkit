@@ -44,25 +44,24 @@ rawkit ls -R -w 'rating>=4' | rawkit reveal          # piped → paths → Finde
 
 ---
 
-## `info` — describe metadata
-
-Two modes selected by input:
-- **single file** → full key/value view of that RAW
-- **multiple inputs OR a directory** → folder summary; add `--by DIM` for per-dimension breakdown
+## `info` — full per-file EXIF detail
 
 ```bash
-rawkit info [PATHS...] [-w EXPR] [--by DIM] [-R] [--json]
+rawkit info [PATHS...] [-w EXPR] [-R] [--json]
+rawkit info -                  # read paths from stdin
+rawkit ls -w '...' | rawkit info
 ```
+
+One detail block per RAW, blank line between. Accepts files, directories (top-level unless `-R`), `-`, or piped paths.
 
 | flag | meaning |
 |------|---------|
-| `PATHS` | single file → FILE mode; anything else → DIR mode |
+| `PATHS` | files / dirs / `-`. Default = `.` |
 | `-w / --where EXPR` | filter (same DSL as `ls`) |
-| `--by DIM` | DIR mode only: partition by one dim. See dim list below |
-| `-R / --recursive` | DIR mode: recurse |
-| `--json` | JSON output |
+| `-R / --recursive` | walk subdirs |
+| `--json` | JSONL (one object per RAW) |
 
-### FILE mode
+Detail block:
 
 ```
 Path          /path/to/IMG_0001.CR3
@@ -84,7 +83,35 @@ GPS           31.200000, 121.500000
 Embedded      JPEG 8192x5464 (5.37 MiB)
 ```
 
-### DIR mode (default)
+```bash
+rawkit info shot.CR3                            # one file
+rawkit info ~/Pictures/2024-trip -R             # every RAW recursively
+rawkit ls -R -w 'rating>=4' | rawkit info       # only the keepers
+```
+
+For aggregate stats (count, ranges, distributions), see `summary` below.
+
+---
+
+## `summary` — aggregate stats over a set
+
+```bash
+rawkit summary [PATHS...] [-w EXPR] [-R] [--by DIM] [--json]
+rawkit summary -               # read paths from stdin
+rawkit ls -w '...' | rawkit summary [--by DIM]
+```
+
+Default = a scalar KV block (count, total size, date range, top maker/camera/lens, exposure ranges, GPS coverage). `--by DIM` switches to a per-bucket breakdown. Path ingestion mirrors `info` / `ls`.
+
+| flag | meaning |
+|------|---------|
+| `PATHS` | files / dirs / `-`. Default = `.` |
+| `-w / --where EXPR` | filter (same DSL as `ls`) |
+| `-R / --recursive` | walk subdirs |
+| `--by DIM` | partition by one dim (see list below); suppresses the default KV view |
+| `--json` | one JSON object with the full aggregation |
+
+### Default KV block
 
 ```
 Path          ~/Pictures/2024-trip
@@ -110,10 +137,12 @@ Maker / Camera / Lens rows auto-shrink (drop name examples, keep count + "+other
 ### `--by`
 
 ```bash
-rawkit info samples/ --by camera
-rawkit info samples/ --by month
-rawkit info samples/ --by lens
-rawkit info samples/ --by aperture -w 'iso>=3200'
+rawkit summary samples/ --by camera
+rawkit summary samples/ --by month
+rawkit summary samples/ --by aperture -w 'iso>=3200'
+
+# the killer pipe: aggregate over any curated subset, not just one folder
+rawkit ls -R -w 'rating>=4' | rawkit summary --by lens
 ```
 
 Output: title + indented `key  count  pct%` rows. No bar chart, no horizontal rule.

@@ -312,6 +312,20 @@ def _stdout_is_tty() -> bool:
         return False
 
 
+def _ingest_paths(paths: list[Path] | None) -> list[Path]:
+    """Return paths from args, or from stdin when '-' or stdin is piped.
+
+    Shared by info / summary / reveal so they all consume `rawkit ls`
+    output the same way. Returns [] when no args and stdin is a TTY —
+    callers decide whether to default (e.g. info → `.`) or error out.
+    """
+    if paths and not (len(paths) == 1 and str(paths[0]) == "-"):
+        return [Path(p) for p in paths]
+    if (paths and str(paths[0]) == "-") or not sys.stdin.isatty():
+        return [Path(line.strip()) for line in sys.stdin if line.strip()]
+    return []
+
+
 def _render_table(
     records: Iterable[dict[str, Any]],
     sort_keys: list[SortKey],
@@ -1850,8 +1864,74 @@ def organize(
 def info(
     paths: list[Path] = typer.Argument(
         None,
-        help="Single RAW file or directories. File input = full-field view; "
-             "directory input = aggregated summary.",
+        help="RAW files, directories, or '-' to read paths from stdin. "
+             "Default = current directory.",
+    ),
+    where: str = typer.Option(
+        "",
+        "--where",
+        "-w",
+        metavar="EXPR",
+        help="Filter by an EXIF predicate (same DSL as `ls --where`).",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-R",
+        help="Recurse into subdirectories (default is top-level only).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit JSONL (one object per RAW).",
+    ),
+) -> None:
+    """Show full per-file EXIF detail for each RAW.
+
+    Accepts file paths, directories (walked top-level unless `-R`), or
+    paths piped in from `rawkit ls` / `-` on stdin. One detail block per
+    file, separated by a blank line.
+
+    \b
+        rawkit info shot.CR3
+        rawkit info ~/Pictures/2024-trip -R
+        rawkit ls -w 'rating>=4' | rawkit info
+    """
+    inputs = _ingest_paths(paths) or [Path(".")]
+
+    raws = _collect_raws(inputs, recursive=recursive)
+    if not raws:
+        typer.echo("no RAW files found", err=True)
+        raise typer.Exit(code=1)
+
+    raws = _filter_paths_by_where(raws, where)
+    if not raws:
+        typer.echo("no records matched --where", err=True)
+        raise typer.Exit(code=1)
+
+    records = safe_batch_read(raws)
+    by_path = {r.get("path"): r for r in records}
+
+    blocks: list[str] = []
+    for raw in raws:
+        rec = by_path.get(str(raw), {})
+        payload = _build_info_file_record(raw, rec)
+        payload["embedded_jpegs"] = _inspect_embedded_jpegs(raw)
+        if as_json:
+            typer.echo(json.dumps(payload, ensure_ascii=False))
+        else:
+            blocks.append(_render_info_file(payload))
+
+    if blocks:
+        typer.echo("\n\n".join(blocks))
+
+
+@app.command()
+def summary(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="RAW files, directories, or '-' to read paths from stdin. "
+             "Default = current directory.",
     ),
     where: str = typer.Option(
         "",
@@ -1864,10 +1944,10 @@ def info(
         "",
         "--by",
         metavar="DIM",
-        help="Directory mode only: partition by one dimension instead of the "
-             "default summary. Valid: camera/model, lens, maker, orientation, "
-             "iso, aperture (alias: fnumber), focal, shutter, bias, rating, "
-             "hour, year, month, day.",
+        help="Partition by one dimension instead of the default KV summary. "
+             "Valid: camera/model, lens, maker, orientation, iso, aperture "
+             "(alias: fnumber), focal, shutter, bias, rating, hour, year, "
+             "month, day.",
     ),
     recursive: bool = typer.Option(
         False,
@@ -1878,45 +1958,21 @@ def info(
     as_json: bool = typer.Option(
         False,
         "--json",
-        help="Emit JSON. File mode = compact info object; directory mode = full structured aggregation.",
+        help="Emit a single JSON object with the full aggregation.",
     ),
 ) -> None:
-    """Describe RAW metadata.
+    """Aggregate stats over a set of RAWs.
 
-    - `info FILE`: full-field key/value view for one RAW.
-    - `info DIR`: vertical KV summary of the folder.
-    - `info DIR --by DIM`: partition the folder along one dimension.
+    Default = scalar KV (count, size, date range, top maker/camera/lens,
+    exposure ranges, GPS coverage, …). `--by FIELD` switches to a per-bucket
+    breakdown. Accepts directories (with `-R`), file paths, or piped paths.
+
+    \b
+        rawkit summary ~/Pictures/2024-trip -R
+        rawkit ls -R -w 'rating>=4' | rawkit summary --by lens
+        rawkit summary . --by month
     """
-    inputs = paths if paths else [Path(".")]
-
-    # Single-file mode: explicit file input only.
-    if len(inputs) == 1 and inputs[0].is_file():
-        if by:
-            typer.echo("rawkit: --by is only valid for directory inputs", err=True)
-            raise typer.Exit(code=2)
-
-        raws = _collect_raws(inputs, recursive=False)
-        if not raws:
-            typer.echo("no RAW files found", err=True)
-            raise typer.Exit(code=1)
-
-        raws_after_where = _filter_paths_by_where(raws, where)
-        if not raws_after_where:
-            typer.echo("no records matched --where", err=True)
-            raise typer.Exit(code=1)
-
-        raw = raws_after_where[0]
-        records = safe_batch_read([raw])
-        rec = records[0] if records else {}
-        payload = _build_info_file_record(raw, rec)
-        payload["embedded_jpegs"] = _inspect_embedded_jpegs(raw)
-        if as_json:
-            typer.echo(json.dumps(payload, ensure_ascii=False))
-        else:
-            typer.echo(_render_info_file(payload))
-        return
-
-    # Directory/multi-input mode.
+    inputs = _ingest_paths(paths) or [Path(".")]
     dim = _parse_by_dim(by)
 
     raws = _collect_raws(inputs, recursive=recursive)
@@ -1940,7 +1996,6 @@ def info(
             paired_paths.append(p)
 
     stats_data = build_stats(paired_records, paired_paths)
-
     path_display = ", ".join(str(p) for p in inputs)
 
     if as_json:
@@ -1984,22 +2039,14 @@ def reveal(
         typer.echo("rawkit reveal: only available on macOS", err=True)
         raise typer.Exit(code=2)
 
-    # Collect input paths from args or stdin.
-    if paths and not (len(paths) == 1 and str(paths[0]) == "-"):
-        raw_paths = [Path(p) for p in paths]
-    elif (paths and str(paths[0]) == "-") or not sys.stdin.isatty():
-        raw_paths = [Path(line.strip()) for line in sys.stdin if line.strip()]
-    else:
+    raw_paths = _ingest_paths(paths)
+    if not raw_paths:
         typer.echo(
             "rawkit reveal: no paths given. Pass paths as arguments, "
             "or pipe them in (e.g. `rawkit ls | rawkit reveal`).",
             err=True,
         )
         raise typer.Exit(code=2)
-
-    if not raw_paths:
-        typer.echo("rawkit reveal: no paths to reveal", err=True)
-        raise typer.Exit(code=1)
 
     # Group by resolved parent dir. Missing files get reported on stderr
     # but don't abort the whole reveal — Finder can still show the rest.

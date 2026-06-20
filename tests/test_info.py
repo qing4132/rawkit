@@ -1,4 +1,4 @@
-"""Tests for the `rawkit info` command (single-file and directory modes)."""
+"""Tests for `rawkit info` — always per-file detail, accepts pipe input."""
 
 from __future__ import annotations
 
@@ -54,6 +54,8 @@ def fake_exif(monkeypatch):
     return fake
 
 
+# --- single file ----------------------------------------------------------
+
 def test_info_file_human_kv_output(tmp_path, fake_exif) -> None:
     raw = tmp_path / "a.ARW"
     raw.write_bytes(b"x" * 2048)
@@ -83,7 +85,9 @@ def test_info_file_json_output(tmp_path, fake_exif) -> None:
     result = runner.invoke(app, ["info", str(raw), "--json"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
     assert payload["path"].endswith("a.ARW")
     assert payload["size_bytes"] == 1024
     assert payload["maker"] == "Canon"
@@ -93,107 +97,77 @@ def test_info_file_json_output(tmp_path, fake_exif) -> None:
     assert payload["embedded_jpegs"] == ["JPEG 1616x1080 (120.6 KiB)"]
 
 
-def test_info_file_rejects_by(tmp_path, fake_exif) -> None:
+def test_info_rejects_by_flag(tmp_path, fake_exif) -> None:
+    """--by belongs to `summary`, not `info`. typer should reject it."""
     raw = tmp_path / "a.ARW"
     raw.write_bytes(b"x")
-
     result = runner.invoke(app, ["info", str(raw), "--by", "month"])
-
-    # --by is no longer a valid option on info at all.
     assert result.exit_code == 2
 
 
-def test_info_directory_kv_view(tmp_path, fake_exif) -> None:
+# --- multi-file / dir / pipe ------------------------------------------------
+
+def test_info_multiple_files_emits_one_block_each(tmp_path, fake_exif) -> None:
+    a = tmp_path / "a.ARW"
+    b = tmp_path / "b.CR3"
+    a.write_bytes(b"x")
+    b.write_bytes(b"x")
+
+    result = runner.invoke(app, ["info", str(a), str(b)])
+    assert result.exit_code == 0
+    path_lines = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
+    assert len(path_lines) == 2
+
+
+def test_info_directory_walks_files(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     (tmp_path / "b.CR3").write_bytes(b"x")
 
     result = runner.invoke(app, ["info", str(tmp_path)])
-
     assert result.exit_code == 0
-    out = result.stdout
-    # New vertical KV layout, parallel to info FILE.
-    assert "Path" in out
-    assert "File" in out
-    assert "RAW" in out
-    assert "Date range" in out
-    assert "Maker" in out
-    assert "Camera" in out
-    assert "Lens" in out
-    assert "ISO" in out
-    assert "Aperture" in out
-    assert "Shutter" in out
-    assert "Focal length" in out
-    # Stats-style headers should NOT appear here.
-    assert "By month" not in out
-    assert "Distribution" not in out
+    # No "Date range" / aggregate labels — those belong to summary now.
+    assert "Date range" not in result.stdout
+    path_lines = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
+    assert len(path_lines) == 2
 
 
-def test_info_directory_json_includes_path(tmp_path, fake_exif) -> None:
-    (tmp_path / "a.ARW").write_bytes(b"x")
+def test_info_reads_paths_from_stdin(tmp_path, fake_exif) -> None:
+    a = tmp_path / "a.ARW"
+    a.write_bytes(b"x")
 
-    result = runner.invoke(app, ["info", str(tmp_path), "--json"])
-
+    result = runner.invoke(app, ["info", "-"], input=f"{a}\n")
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["path"] == str(tmp_path)
-    assert payload["total"]["count"] == 1
+    assert "a.ARW" in result.stdout
+    assert "Canon" in result.stdout
 
 
-def test_info_directory_filter_row_shown_when_where(tmp_path, fake_exif) -> None:
-    (tmp_path / "a.ARW").write_bytes(b"x")
-
-    result = runner.invoke(app, ["info", str(tmp_path), "--where", "iso>=100"])
-
-    assert result.exit_code == 0
-    assert "Filter" in result.stdout
-    assert "iso>=100" in result.stdout
-
-
-def test_info_by_camera_renders_section(tmp_path, fake_exif) -> None:
+def test_info_json_emits_jsonl_for_multi(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     (tmp_path / "b.CR3").write_bytes(b"x")
 
-    result = runner.invoke(app, ["info", str(tmp_path), "--by", "camera"])
-
+    result = runner.invoke(app, ["info", str(tmp_path), "--json"])
     assert result.exit_code == 0
-    out = result.stdout
-    assert "Camera" in out
-    assert "EOS R5" in out
-    assert "100%" in out
-    # --by suppresses the default KV view.
-    assert "Date range" not in out
-    # No bar-chart hrule / bars / "By camera" header from old stats.
-    assert "█" not in out
-    assert "──" not in out
-    assert "By camera" not in out
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert len(lines) == 2
+    for ln in lines:
+        obj = json.loads(ln)
+        assert "path" in obj
+        assert obj["maker"] == "Canon"
 
 
-def test_info_by_unknown_dim_exits_2(tmp_path, fake_exif) -> None:
-    (tmp_path / "a.ARW").write_bytes(b"x")
-    result = runner.invoke(app, ["info", str(tmp_path), "--by", "color"])
-    assert result.exit_code == 2
-    assert "unknown dimension" in result.stderr
+def test_info_where_filters_before_render(tmp_path, monkeypatch) -> None:
+    def fake(paths):
+        return [
+            {"path": str(p), "iso": 100 if "low" in Path(p).name else 6400,
+             "maker": "Canon", "model": "EOS R5", "lens": "RF50"}
+            for p in paths
+        ]
+    monkeypatch.setattr("rawkit.cli.safe_batch_read", fake)
 
+    (tmp_path / "low.ARW").write_bytes(b"x")
+    (tmp_path / "high.ARW").write_bytes(b"x")
 
-def test_info_by_multidim_not_yet_supported(tmp_path, fake_exif) -> None:
-    (tmp_path / "a.ARW").write_bytes(b"x")
-    result = runner.invoke(app, ["info", str(tmp_path), "--by", "camera,lens"])
-    assert result.exit_code == 2
-    assert "multi-dim" in result.stderr
-
-
-def test_info_by_file_input_rejected(tmp_path, fake_exif) -> None:
-    raw = tmp_path / "a.ARW"
-    raw.write_bytes(b"x")
-    result = runner.invoke(app, ["info", str(raw), "--by", "camera"])
-    assert result.exit_code == 2
-    assert "--by is only valid" in result.stderr
-
-
-def test_info_by_filter_caption(tmp_path, fake_exif) -> None:
-    (tmp_path / "a.ARW").write_bytes(b"x")
-    result = runner.invoke(
-        app, ["info", str(tmp_path), "--by", "camera", "--where", "iso>=50"]
-    )
+    result = runner.invoke(app, ["info", str(tmp_path), "-w", "iso>=3200"])
     assert result.exit_code == 0
-    assert "filter: iso>=50" in result.stdout
+    assert "high.ARW" in result.stdout
+    assert "low.ARW" not in result.stdout

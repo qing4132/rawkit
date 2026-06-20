@@ -4,9 +4,8 @@ Personal notes on what's deferred and what I deliberately won't do. Not a public
 
 ## Deferred (might do, no plan)
 
-- **`info` reading stdin paths** — for the `ls -s iso -r --path | head -10 | info` case (summarize a manually-curated subset, e.g. "top-N by sort"). `info -w` already covers value-based filtering; this is only useful when the upstream selection is sort-then-take or fzf-picked. ~20 lines if needed. Genuinely small niche but actually hit during dogfood.
-- **`info --by FOO -l`** — list file paths under each bucket. Solves "I see bucket ≤100 ISO has 4 files, which 4?" without re-typing `ls -w`. ~30 lines, low risk.
-- **`info --by A,B`** — multi-dim nested breakdown (mirrors `organize --by A,B`'s directory chain). Currently exits 2.
+- **`summary --by FOO -l`** — list file paths under each bucket. Solves "I see bucket ≤100 ISO has 4 files, which 4?" without re-typing `ls -w`. ~30 lines, low risk.
+- **`summary --by A,B`** — multi-dim nested breakdown (mirrors `organize --by A,B`'s directory chain). Currently exits 2.
 - **35mm-equivalent focal length** — `focal` is raw lens value, no crop-factor normalization. Would need maker→crop table or read `FocalLengthIn35mmFormat` EXIF tag. Adds a semantic fork ("does `--where focal>=70` mean raw or equivalent?") so not done lightly.
 - **`verify`** — file integrity check (magic number, exiftool reads cleanly, bytes read without error). Useful for card transfer / bit rot detection.
 - **`duplicates`** — find duplicate RAWs by content hash or datetime+model. Useful when merging cards or cleaning old drives.
@@ -20,10 +19,9 @@ Personal notes on what's deferred and what I deliberately won't do. Not a public
 - **LrC XMP read/write** — explicitly not interop with Adobe.
 - **File watchers / daemons** — violates stateless.
 - **Catalog / database / index** — violates stateless.
-- **Standalone `stats` command** — folded into `info --by`.
+- **Standalone `stats` command** — the aggregation verb is `summary`, not `stats`.
 - **`--sort` and `--by` merged** — they mean different things (ORDER BY vs GROUP BY).
 - **Remembering "last `--where`" / cross-command state** — shell history handles this.
-- **stdin path reading / cross-command pipes** — every command has `--where`; pipes add no expressiveness.
 - **`--prune` default-on** — rmdir is irreversible; must be opt-in.
 - **`tag` / `rate` / `keyword` write commands** — would mean rawkit-managed sidecars next to RAWs, crossing into "managing my photo library" territory that LrC already does well enough for me.
 

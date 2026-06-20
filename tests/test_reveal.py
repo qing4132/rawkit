@@ -162,11 +162,11 @@ def test_reveal_missing_file_reports_but_continues(tmp_path, capture_osascript) 
     assert len(capture_osascript) == 1  # real one still revealed
 
 
-def test_reveal_empty_stdin_exits_1(tmp_path, capture_osascript) -> None:
-    # CliRunner's stdin is non-TTY → reveal reads stdin, gets nothing,
-    # exits 1 (nothing to reveal) rather than 2 (usage error).
+def test_reveal_empty_stdin_exits_2(tmp_path, capture_osascript) -> None:
+    # CliRunner's stdin is non-TTY → reveal reads stdin, gets nothing →
+    # treated as "no paths given" (usage error).
     result = runner.invoke(app, ["reveal"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "no paths" in result.stderr.lower()
     assert capture_osascript == []
 

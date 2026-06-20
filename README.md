@@ -8,12 +8,15 @@ This is my (@qing4132) tool for my own RAW workflow. Public so anyone interested
 
 ## Commands
 
-- `ls` — table of RAW files with key EXIF
-- `info` — describe one file (full fields) or a folder (KV summary; `--by` for per-dimension breakdown)
+- `ls` — table of RAW files with key EXIF (auto-emits paths when piped)
+- `info` — full per-file EXIF detail; accepts files, dirs, or piped paths
+- `summary` — aggregate stats over a set (count, ranges, top values; `--by FIELD` for bucket breakdown)
 - `extract` — pull the embedded SOOC JPEG out of each RAW (fast, no decode)
 - `render` — libraw demosaic → JPEG/TIFF/PNG (slower, full sensor resolution)
 - `organize` — move/copy files into a folder tree keyed by EXIF dimensions
-- `reveal` — open Finder window(s) with selected RAWs (macOS only; pairs with `ls` via pipe)
+- `reveal` — open Finder window(s) with selected RAWs (macOS only)
+
+They compose through pipes: `ls` selects, the rest consume. e.g. `rawkit ls -R -w 'rating>=4' | rawkit summary --by lens`.
 
 See [USAGE.md](USAGE.md) for details.
 
@@ -44,7 +47,8 @@ Read-only on RAW files. Local-only — no cloud, no catalog, no index. Each comm
 
 Shared infrastructure:
 - `--where` DSL (lark-based, no eval()) — used by every command that takes a set of files
-- `--by` vocabulary — shared between `info` and `organize`
-- `--json` on `ls` and `info` for pipe-friendly output
+- `--by` vocabulary — shared between `summary` and `organize`
+- `--json` on `ls` / `info` / `summary` for pipe-friendly output
+- Path ingestion: every set-taking command accepts files, dirs (with `-R`), `-`, or pipe
 
 Not here, on purpose: edit/develop, AI, GUI, Adobe XMP interop, sidecar writes, file watchers, catalogs. See [TODO.md](TODO.md) for the deferred / rejected list.
