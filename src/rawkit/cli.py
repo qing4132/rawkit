@@ -948,12 +948,23 @@ def ls(
         "--json",
         help="Emit JSONL on stdout (one object per file) instead of an aligned table.",
     ),
+    as_paths: bool = typer.Option(
+        False,
+        "--paths",
+        help="Emit one absolute path per line on stdout. Pipes naturally into "
+             "`rawkit reveal`, `xargs`, `fzf`, etc. Mutually exclusive with --json.",
+    ),
 ) -> None:
     """List RAW files under the given paths with their key EXIF.
 
     Default output is an aligned, human-readable table. Use --json to pipe the
-    output into jq or other tooling.
+    output into jq or other tooling, or --paths for plain newline-delimited
+    paths (pairs well with `rawkit reveal`).
     """
+    if as_json and as_paths:
+        typer.echo("rawkit ls: --json and --paths are mutually exclusive", err=True)
+        raise typer.Exit(code=2)
+
     inputs = paths if paths else [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
@@ -977,6 +988,11 @@ def ls(
 
     if as_json:
         _emit_jsonl(records)
+    elif as_paths:
+        for r in records:
+            p = r.get("path")
+            if p:
+                typer.echo(p)
     else:
         _render_table(records, sort_keys=sort_keys, reverse=reverse)
 
@@ -1938,3 +1954,91 @@ def info(
     else:
         typer.echo(_render_info_by(stats_data, dim, where=where))
 
+
+
+# --- reveal command ---------------------------------------------------------
+
+@app.command()
+def reveal(
+    paths: list[Path] = typer.Argument(
+        None,
+        help="Paths to reveal. Use '-' (or no args + piped stdin) to read "
+             "paths one-per-line from stdin.",
+    ),
+) -> None:
+    """Reveal RAW files in Finder, with each one selected.
+
+    macOS only. Paths sharing a parent directory are grouped into one
+    Finder window with all of them selected; different parents open
+    separate windows. Always coupled with `ls --paths`:
+
+    \b
+        rawkit ls -w 'iso>=3200' -s iso -r --paths | rawkit reveal
+        rawkit ls -R -w 'flash' --paths | head -5 | rawkit reveal
+        rawkit ls -R -w 'rating>=4' --paths | rawkit reveal
+
+    No EXIF filtering / sorting / limit lives here — that's `ls`'s job.
+    reveal is the action that consumes ls's selected paths.
+    """
+    if sys.platform != "darwin":
+        typer.echo("rawkit reveal: only available on macOS", err=True)
+        raise typer.Exit(code=2)
+
+    # Collect input paths from args or stdin.
+    if paths and not (len(paths) == 1 and str(paths[0]) == "-"):
+        raw_paths = [Path(p) for p in paths]
+    elif (paths and str(paths[0]) == "-") or not sys.stdin.isatty():
+        raw_paths = [Path(line.strip()) for line in sys.stdin if line.strip()]
+    else:
+        typer.echo(
+            "rawkit reveal: no paths given. Pass paths as arguments, "
+            "or pipe them in (e.g. `rawkit ls --paths | rawkit reveal`).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    if not raw_paths:
+        typer.echo("rawkit reveal: no paths to reveal", err=True)
+        raise typer.Exit(code=1)
+
+    # Group by resolved parent dir. Missing files get reported on stderr
+    # but don't abort the whole reveal — Finder can still show the rest.
+    by_parent: dict[Path, list[Path]] = {}
+    missing: list[Path] = []
+    for p in raw_paths:
+        try:
+            real = p.resolve(strict=True)
+        except (OSError, FileNotFoundError):
+            missing.append(p)
+            continue
+        by_parent.setdefault(real.parent, []).append(real)
+
+    for m in missing:
+        typer.echo(f"rawkit reveal: {m}: not found", err=True)
+
+    if not by_parent:
+        raise typer.Exit(code=1)
+
+    import subprocess
+
+    # One AppleScript per parent → one Finder window with multi-select.
+    # `reveal` of a list of aliases sharing a parent opens that parent
+    # and selects all of them in one shot.
+    for files in by_parent.values():
+        aliases = ", ".join(f'(POSIX file "{f}") as alias' for f in files)
+        script = (
+            'tell application "Finder"\n'
+            '    activate\n'
+            f'    reveal {{{aliases}}}\n'
+            'end tell\n'
+        )
+        try:
+            subprocess.run(
+                ["osascript", "-e", script],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            typer.echo("rawkit reveal: osascript not found (macOS only)", err=True)
+            raise typer.Exit(code=2)
