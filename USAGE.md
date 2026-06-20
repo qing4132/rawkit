@@ -259,9 +259,6 @@ rawkit ls -R -w 'rating>=4' --path | rawkit reveal
 
 # show top-5 highest-ISO files
 rawkit ls -R -w 'iso>=3200' -s iso -r --path | head -5 | rawkit reveal
-
-# interactive multi-select with fzf (brew install fzf)
-rawkit ls -R --path | fzf -m | rawkit reveal
 ```
 
 ---
