@@ -1866,7 +1866,8 @@ def info(
         metavar="DIM",
         help="Directory mode only: partition by one dimension instead of the "
              "default summary. Valid: camera/model, lens, maker, orientation, "
-             "iso, aperture (alias: fnumber), focal, hour, year, month, day.",
+             "iso, aperture (alias: fnumber), focal, shutter, bias, rating, "
+             "hour, year, month, day.",
     ),
     top: int = typer.Option(
         5,
