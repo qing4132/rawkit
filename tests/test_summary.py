@@ -77,7 +77,9 @@ def test_summary_dir_json_includes_path(tmp_path, fake_exif) -> None:
     result = runner.invoke(app, ["summary", str(tmp_path), "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["path"] == str(tmp_path)
+    # Same resolve+trailing-slash rule as the human view.
+    assert payload["path"].rstrip("/") == str(tmp_path).rstrip("/")
+    assert payload["path"].endswith("/")
     assert payload["total"]["count"] == 1
 
 
@@ -172,8 +174,8 @@ def test_summary_pipe_with_by(tmp_path, fake_exif) -> None:
 # --- path row truncation ----------------------------------------------------
 
 def test_summary_pipe_path_row_uses_common_parent(tmp_path, fake_exif) -> None:
-    """Piping N file paths must not blow up the Path row by joining them all;
-    it should collapse to the common parent directory + a count."""
+    """Piping N file paths must not dump all basenames into the Path row;
+    it should collapse to the common parent directory, with a trailing /."""
     for name in ("a.ARW", "b.CR3", "c.NEF", "d.RAF", "e.DNG"):
         (tmp_path / name).write_bytes(b"x")
     stdin = "\n".join(str(tmp_path / n) for n in
@@ -184,7 +186,33 @@ def test_summary_pipe_path_row_uses_common_parent(tmp_path, fake_exif) -> None:
     path_rows = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
     assert len(path_rows) == 1
     row = path_rows[0]
-    # Must show count + a single directory, not the joined basenames.
-    assert "(5 paths)" in row
+    # Single common-parent directory, trailing slash. Count is NOT here
+    # (it's in the File row); no basenames leak through.
+    assert row.rstrip().endswith("/")
     assert "a.ARW" not in row
     assert "b.CR3" not in row
+    assert "paths" not in row
+    assert "RAW" not in row.replace("RAWs", "")  # belongs to File row
+
+
+def test_summary_path_row_unified_across_inputs(tmp_path, fake_exif) -> None:
+    """All four input styles (1 file, 1 dir, N piped files, mixed) collapse
+    to the SAME Path row when they refer to the same scope."""
+    a = tmp_path / "a.ARW"
+    b = tmp_path / "b.CR3"
+    a.write_bytes(b"x")
+    b.write_bytes(b"x")
+
+    def path_row(result):
+        rows = [ln for ln in result.stdout.splitlines() if ln.startswith("Path")]
+        assert len(rows) == 1
+        return rows[0]
+
+    r_dir = runner.invoke(app, ["summary", str(tmp_path)])
+    r_one_file = runner.invoke(app, ["summary", str(a)])
+    r_two_files = runner.invoke(app, ["summary", str(a), str(b)])
+    r_piped = runner.invoke(app, ["summary", "-"], input=f"{a}\n{b}\n")
+
+    rows = {path_row(r_dir), path_row(r_one_file),
+            path_row(r_two_files), path_row(r_piped)}
+    assert len(rows) == 1, f"Path rows differ across input styles: {rows}"
