@@ -1,7 +1,9 @@
-"""Tests for `rawkit reveal` and the `ls --path` flag it pairs with.
+"""Tests for `rawkit reveal` and `ls`'s auto-path output when piped.
 
 reveal uses macOS's Finder via osascript; we patch subprocess.run to
 capture the AppleScript invocations rather than actually opening windows.
+`ls` under CliRunner sees a non-TTY stdout, so it auto-emits one absolute
+path per line — same shape reveal consumes downstream.
 """
 
 from __future__ import annotations
@@ -57,13 +59,13 @@ def capture_osascript(monkeypatch):
     return calls
 
 
-# --- ls --path ------------------------------------------------------------
+# --- ls auto-path on pipe -------------------------------------------------
 
-def test_ls_path_emits_one_per_line(tmp_path, fake_exif) -> None:
+def test_ls_pipe_emits_one_path_per_line(tmp_path, fake_exif) -> None:
     (tmp_path / "a.ARW").write_bytes(b"x")
     (tmp_path / "b.CR3").write_bytes(b"x")
 
-    result = runner.invoke(app, ["ls", str(tmp_path), "--path"])
+    result = runner.invoke(app, ["ls", str(tmp_path)])
     assert result.exit_code == 0
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
     assert len(lines) == 2
@@ -74,7 +76,7 @@ def test_ls_path_emits_one_per_line(tmp_path, fake_exif) -> None:
     assert "model" not in result.stdout
 
 
-def test_ls_path_respects_where(tmp_path, fake_exif, monkeypatch) -> None:
+def test_ls_pipe_respects_where(tmp_path, fake_exif, monkeypatch) -> None:
     def fake(paths):
         return [
             {"path": str(p), "iso": 100 if "low" in Path(p).name else 6400,
@@ -86,19 +88,23 @@ def test_ls_path_respects_where(tmp_path, fake_exif, monkeypatch) -> None:
     (tmp_path / "low.ARW").write_bytes(b"x")
     (tmp_path / "high.ARW").write_bytes(b"x")
 
-    result = runner.invoke(app, ["ls", str(tmp_path), "-w", "iso>=3200", "--path"])
+    result = runner.invoke(app, ["ls", str(tmp_path), "-w", "iso>=3200"])
     assert result.exit_code == 0
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
     assert len(lines) == 1
     assert lines[0].endswith("high.ARW")
 
 
-def test_ls_path_and_json_mutually_exclusive(tmp_path, fake_exif) -> None:
+def test_ls_tty_renders_table(tmp_path, fake_exif, monkeypatch) -> None:
+    """When stdout looks like a terminal, ls renders the human table — not paths."""
+    monkeypatch.setattr("rawkit.cli._stdout_is_tty", lambda: True)
     (tmp_path / "a.ARW").write_bytes(b"x")
 
-    result = runner.invoke(app, ["ls", str(tmp_path), "--path", "--json"])
-    assert result.exit_code == 2
-    assert "mutually exclusive" in result.stderr
+    result = runner.invoke(app, ["ls", str(tmp_path)])
+    assert result.exit_code == 0
+    # Table has a header row; path-mode has none.
+    assert "datetime" in result.stdout
+    assert "model" in result.stdout
 
 
 # --- reveal ----------------------------------------------------------------

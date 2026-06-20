@@ -13,7 +13,7 @@ This is my (@qing4132) tool for my own RAW workflow. Public so anyone interested
 - `extract` — pull the embedded SOOC JPEG out of each RAW (fast, no decode)
 - `render` — libraw demosaic → JPEG/TIFF/PNG (slower, full sensor resolution)
 - `organize` — move/copy files into a folder tree keyed by EXIF dimensions
-- `reveal` — open Finder window(s) with selected RAWs (macOS only; pairs with `ls --path`)
+- `reveal` — open Finder window(s) with selected RAWs (macOS only; pairs with `ls` via pipe)
 
 See [USAGE.md](USAGE.md) for details.
 

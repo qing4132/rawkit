@@ -18,10 +18,12 @@ Requires Python 3.14+.
 ## `ls` — list RAWs as a table
 
 ```bash
-rawkit ls [PATHS...] [-w EXPR] [-s KEY,...] [-r] [-R] [--json | --path]
+rawkit ls [PATHS...] [-w EXPR] [-s KEY,...] [-r] [-R] [--json]
 ```
 
 Default columns: `file datetime model lens focal aperture shutter bias iso`. Default sort: `datetime` ascending.
+
+Output shape adapts to stdout: a human-readable table when it's a terminal, one absolute path per line when it's piped or redirected. `--json` forces JSONL for structured downstream tools.
 
 | flag | meaning |
 |------|---------|
@@ -30,15 +32,14 @@ Default columns: `file datetime model lens focal aperture shutter bias iso`. Def
 | `-s / --sort KEY[,KEY,...]` | sort keys: file / datetime / date / time / model / lens / focal / aperture / shutter / bias / iso |
 | `-r / --reverse` | reverse sort |
 | `-R / --recursive` | recurse into subdirs |
-| `--json` | JSONL output (one object per file) |
-| `--path` | one absolute path per line (pairs with `rawkit reveal`, `xargs`, `fzf`). Mutually exclusive with `--json` |
+| `--json` | force JSONL (one object per file) on stdout |
 
 ```bash
-rawkit ls ~/Pictures/2024-trip                          # whole directory
-rawkit ls *.CR3 -s iso -r                               # by ISO descending
-rawkit ls . -w 'iso>3200 and lens~"50"'                 # filter
-rawkit ls . --json | jq '.path'                         # pipe to jq
-rawkit ls -R -w 'rating>=4' --path | rawkit reveal      # show keepers in Finder
+rawkit ls ~/Pictures/2024-trip                       # table
+rawkit ls *.CR3 -s iso -r                            # by ISO descending
+rawkit ls . -w 'iso>3200 and lens~"50"'              # filter
+rawkit ls . --json | jq '.path'                      # JSONL for jq
+rawkit ls -R -w 'rating>=4' | rawkit reveal          # piped → paths → Finder
 ```
 
 ---
@@ -244,10 +245,10 @@ rawkit organize ~/Pictures -o ~/sorted --by month -n
 ```bash
 rawkit reveal PATH...
 rawkit reveal -                    # read paths from stdin
-rawkit ls -w '...' --path | rawkit reveal   # auto-detect pipe
+rawkit ls -w '...' | rawkit reveal # auto-detect pipe; ls emits paths when not a TTY
 ```
 
-Pure action command — no `--where`, no `--sort`, no filter logic. It takes paths and reveals them. Filtering / sorting / picking is `ls`'s job (or the shell's, via `head` / `sed` / `fzf`).
+Pure action command — no `--where`, no `--sort`, no filter logic. It takes paths and reveals them. Filtering / sorting / picking is `ls`'s job (or the shell's, via `head` / `sed`).
 
 Paths sharing a parent directory are grouped into one Finder window with all of them selected; different parents open separate windows. Missing files are reported to stderr but don't abort the rest.
 
@@ -255,10 +256,10 @@ macOS only — uses `osascript` + Finder's `reveal`. Non-macOS exits 2 with a fr
 
 ```bash
 # show all 4★+ shots in Finder, grouped by their actual folder
-rawkit ls -R -w 'rating>=4' --path | rawkit reveal
+rawkit ls -R -w 'rating>=4' | rawkit reveal
 
 # show top-5 highest-ISO files
-rawkit ls -R -w 'iso>=3200' -s iso -r --path | head -5 | rawkit reveal
+rawkit ls -R -w 'iso>=3200' -s iso -r | head -5 | rawkit reveal
 ```
 
 ---

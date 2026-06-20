@@ -149,9 +149,10 @@ def test_ls_json_emits_jsonl(tmp_path, fake_exif) -> None:
     assert isinstance(parsed[0]["fnumber"], (int, float))
 
 
-def test_ls_table_formats_human_values(tmp_path, fake_exif) -> None:
+def test_ls_table_formats_human_values(tmp_path, fake_exif, monkeypatch) -> None:
     """0.004s → '1/250'; 1.4 → 'f/1.4'; date trimmed to minute; bias signed."""
     (tmp_path / "a.ARW").write_bytes(b"")
+    monkeypatch.setattr("rawkit.cli._stdout_is_tty", lambda: True)
 
     result = runner.invoke(app, ["ls", str(tmp_path)])
     assert result.exit_code == 0
@@ -429,10 +430,11 @@ def test_ls_sort_breaks_ties_by_subsecond(tmp_path, monkeypatch) -> None:
     assert _basenames_from_json(result.stdout) == ["c.NEF", "b.CR3", "a.ARW"]
 
 
-def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif) -> None:
+def test_long_filename_does_not_inflate_other_rows(tmp_path, fake_exif, monkeypatch) -> None:
     """A pathologically long filename wraps within its own column;
     the short-name row stays at its natural single-line width and
     is never pushed wider by the outlier."""
+    monkeypatch.setattr("rawkit.cli._stdout_is_tty", lambda: True)
     short = tmp_path / "short.ARW"
     long_name = tmp_path / ("really_long_" + "x" * 60 + ".ARW")  # 76+ chars
     short.write_bytes(b"")

@@ -304,6 +304,14 @@ _SORT_HEADER_MAP: dict[str, str] = {
 }
 
 
+def _stdout_is_tty() -> bool:
+    """Indirection so tests can pretend the terminal is/isn't a TTY."""
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
 def _render_table(
     records: Iterable[dict[str, Any]],
     sort_keys: list[SortKey],
@@ -948,23 +956,14 @@ def ls(
         "--json",
         help="Emit JSONL on stdout (one object per file) instead of an aligned table.",
     ),
-    as_path: bool = typer.Option(
-        False,
-        "--path",
-        help="Emit one absolute path per line on stdout. Pipes naturally into "
-             "`rawkit reveal`, `xargs`, `fzf`, etc. Mutually exclusive with --json.",
-    ),
 ) -> None:
     """List RAW files under the given paths with their key EXIF.
 
-    Default output is an aligned, human-readable table. Use --json to pipe the
-    output into jq or other tooling, or --path for plain newline-delimited
-    paths (pairs well with `rawkit reveal`).
+    Default output is an aligned, human-readable table when stdout is a
+    terminal, and one absolute path per line when stdout is piped or
+    redirected (so `rawkit ls ... | rawkit reveal` just works). Use --json
+    to force JSONL for jq and friends.
     """
-    if as_json and as_path:
-        typer.echo("rawkit ls: --json and --path are mutually exclusive", err=True)
-        raise typer.Exit(code=2)
-
     inputs = paths if paths else [Path(".")]
     raws = _collect_raws(inputs, recursive=recursive)
     if not raws:
@@ -988,7 +987,7 @@ def ls(
 
     if as_json:
         _emit_jsonl(records)
-    elif as_path:
+    elif not _stdout_is_tty():
         for r in records:
             p = r.get("path")
             if p:
@@ -1970,12 +1969,13 @@ def reveal(
 
     macOS only. Paths sharing a parent directory are grouped into one
     Finder window with all of them selected; different parents open
-    separate windows. Always coupled with `ls --path`:
+    separate windows. Pipe paths in from `ls` (it auto-emits paths when
+    its stdout is not a terminal):
 
     \b
-        rawkit ls -w 'iso>=3200' -s iso -r --path | rawkit reveal
-        rawkit ls -R -w 'flash' --path | head -5 | rawkit reveal
-        rawkit ls -R -w 'rating>=4' --path | rawkit reveal
+        rawkit ls -w 'iso>=3200' -s iso -r | rawkit reveal
+        rawkit ls -R -w 'flash' | head -5 | rawkit reveal
+        rawkit ls -R -w 'rating>=4' | rawkit reveal
 
     No EXIF filtering / sorting / limit lives here — that's `ls`'s job.
     reveal is the action that consumes ls's selected paths.
@@ -1992,7 +1992,7 @@ def reveal(
     else:
         typer.echo(
             "rawkit reveal: no paths given. Pass paths as arguments, "
-            "or pipe them in (e.g. `rawkit ls --path | rawkit reveal`).",
+            "or pipe them in (e.g. `rawkit ls | rawkit reveal`).",
             err=True,
         )
         raise typer.Exit(code=2)
