@@ -486,12 +486,12 @@ _INFO_BY_DIMS: dict[str, tuple[str, str]] = {
 }
 
 
-def _render_info_by(stats: dict[str, Any], dim: str, *, top: int, where: str) -> str:
+def _render_info_by(stats: dict[str, Any], dim: str, *, where: str) -> str:
     """Single-dim partition view: title + indented bucket rows.
 
     No bars, no horizontal rule. Plain count and percent share, aligned.
-    `top` truncates only the unbounded `lens` dimension; bounded dims
-    (camera count, ISO/aperture/focal/hour/orientation buckets) ignore it.
+    Always shows all buckets — if a dim's output ever grows too big to
+    scroll comfortably, add a generic `--limit N` later.
     """
     title, stats_key = _INFO_BY_DIMS[dim]
     items = stats.get(stats_key, [])
@@ -503,25 +503,10 @@ def _render_info_by(stats: dict[str, Any], dim: str, *, top: int, where: str) ->
         head.append("  no data")
         return "\n".join(head)
 
-    apply_top = dim == "lens"
-    display = items
-    hidden: list[dict[str, Any]] = []
-    if apply_top and top > 0 and len(items) > top:
-        display = items[:top]
-        hidden = items[top:]
-
     rows: list[tuple[str, str, str]] = []
-    for it in display:
+    for it in items:
         pct = round(it["share"] * 100)
         rows.append((str(it["key"]), str(it["count"]), f"{pct}%"))
-    if hidden:
-        others_count = sum(it["count"] for it in hidden)
-        others_share = sum(it["share"] for it in hidden)
-        rows.append((
-            f"+{len(hidden)} others",
-            str(others_count),
-            f"{round(others_share * 100)}%",
-        ))
 
     key_w = max(len(k) for k, _, _ in rows)
     count_w = max(len(c) for _, c, _ in rows)
@@ -1869,18 +1854,6 @@ def info(
              "iso, aperture (alias: fnumber), focal, shutter, bias, rating, "
              "hour, year, month, day.",
     ),
-    top: int = typer.Option(
-        5,
-        "--top",
-        metavar="N",
-        help="With --by lens: keep top N, collapse the rest into '+others'. "
-             "Other dimensions ignore this (their buckets are bounded).",
-    ),
-    more: bool = typer.Option(
-        False,
-        "--more",
-        help="With --by lens: show all lenses (overrides --top).",
-    ),
     recursive: bool = typer.Option(
         False,
         "--recursive",
@@ -1963,6 +1936,5 @@ def info(
     if dim is None:
         typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
     else:
-        lens_top = 999_999 if more else top
-        typer.echo(_render_info_by(stats_data, dim, top=lens_top, where=where))
+        typer.echo(_render_info_by(stats_data, dim, where=where))
 

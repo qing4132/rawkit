@@ -48,7 +48,7 @@ Two modes selected by input:
 - **multiple inputs OR a directory** → folder summary; add `--by DIM` for per-dimension breakdown
 
 ```bash
-rawkit info [PATHS...] [-w EXPR] [--by DIM] [--top N] [--more] [-R] [--json]
+rawkit info [PATHS...] [-w EXPR] [--by DIM] [-R] [--json]
 ```
 
 | flag | meaning |
@@ -56,8 +56,6 @@ rawkit info [PATHS...] [-w EXPR] [--by DIM] [--top N] [--more] [-R] [--json]
 | `PATHS` | single file → FILE mode; anything else → DIR mode |
 | `-w / --where EXPR` | filter (same DSL as `ls`) |
 | `--by DIM` | DIR mode only: partition by one dim. See dim list below |
-| `--top N` | only meaningful with `--by lens`. Default 5 |
-| `--more` | with `--by lens`: show all (overrides `--top`) |
 | `-R / --recursive` | DIR mode: recurse |
 | `--json` | JSON output |
 
@@ -111,7 +109,7 @@ Maker / Camera / Lens rows auto-shrink (drop name examples, keep count + "+other
 ```bash
 rawkit info samples/ --by camera
 rawkit info samples/ --by month
-rawkit info samples/ --by lens --more
+rawkit info samples/ --by lens
 rawkit info samples/ --by aperture -w 'iso>=3200'
 ```
 
