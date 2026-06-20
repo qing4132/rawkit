@@ -1,7 +1,6 @@
 # USAGE
 
-> 当前实际可用的命令。这页随代码同步更新。
-> V1 的目标 surface(`ls` / `info` / `extract` / `render` / `organize`)还没全部对齐;现在能跑的是 `ls` / `extract` / `render` / `stats`,后者未来会合并进 `info`。看 [TODO.md](TODO.md)。
+> 五个命令: `ls` / `info` / `extract` / `render` / `organize`。本页随代码同步更新。设计路线见 [TODO.md](TODO.md)。
 
 ---
 
@@ -131,55 +130,167 @@ rawkit render . -o tiff/ --format tiff -w 'rating==5'   # 顶级片输出 TIFF
 
 ---
 
-## `rawkit stats` (V1 会并进 `info`)
+## `rawkit info`
 
-聚合一组 RAW 的 EXIF + 文件大小。默认一屏概览;`--by` 钻一个维度。
+描述 RAW。两种模式以输入是单文件还是多/文件夹划分;单文件 = 全字段 KV,多/文件夹 = 整体 KV summary 或 `--by` 某一维度的分档。
 
 ```bash
-rawkit stats [PATHS...] [-w EXPR] [--by DIM[,DIM2,...]] [-R] [--json]
+rawkit info [PATHS...] [-w EXPR] [--by DIM] [--top N] [--more] [-R] [--json]
 ```
 
 | flag                | 含义 |
 | ------------------- | --- |
-| `--by DIM`          | 钻一个维度。可选:`model` / `camera` / `lens` / `maker` / `orientation` / `iso` / `aperture`(= `fnumber`) / `focal` / `hour` / `year` / `month` / `day`。带 `--by` 时不再打默认概览,只出 bar chart |
-| `--top N`           | `lens` 维度的 top-N 截断(默认 5)。其他维度忽略 |
-| `--more`            | `lens` 维度显示全部(覆盖 `--top`) |
-| `-w / --where EXPR` | 同 `ls --where` |
-| `-R / --recursive`  | 递归 |
-| `--json`            | 结构化输出全量(不受 `--by` / `--top` 影响) |
+| `PATHS`             | 单文件 → FILE 模式;其他一切(文件夹 / 多输入 / 默认当前目录) → DIR 模式 |
+| `-w / --where EXPR` | EXIF 谓词过滤(同 `ls --where`) |
+| `--by DIM`          | DIR 模式:按一个维度分档。示例见下。多维 `A,B` 暂不支持 |
+| `--top N`           | 仅对 `--by lens` 生效的 top-N 截断(默认 5) |
+| `--more`            | `--by lens` 显示全部(覆盖 `--top`) |
+| `-R / --recursive`  | DIR 模式:递归 |
+| `--json`            | JSON 输出(FILE 一个对象;DIR 完整聚合字典) |
 
-### 默认输出
+### FILE 模式
 
 ```
-Photos        25
-Total size    1.37 GiB
-Date range    2022-04-23 → 2025-08-09  (3 years, 3 months, 17 days)
-Hour          02–03, 06, 10–12, 14–20, 22–23
-Cameras       11
-Lenses        22
-Orientation   22 (landscape), 3 (portrait)
-ISO           64 – 6400
-Aperture      f/1.4 – f/11
-Shutter       1/1250 – 10s
-Focal length  14mm – 800mm
+Path          /path/to/IMG_0001.CR3
+Size          51.8 MiB (54348886 B)
+DateTime      2022-05-13 16:38:09.01
+Maker         Canon
+Camera        EOS R5
+Lens          RF50mm F1.8 STM
+ISO           400
+Aperture      f/1.8
+Shutter       1/250
+Focal length  50mm
+Bias          0 EV
+Rating        0
+Orientation   landscape
+Flash         False
+Image         8192x5464
+GPS           31.200000, 121.500000
+Embedded      JPEG 8192x5464 (5.37 MiB)
 ```
 
-字段含义:
-- **Date range**:`(N years, N months, N days)` 是 start → end 的**日历分解**(三者相加 = 跨度)。
-- **Hour**:出现过的小时按连续段合并显示。`02–03, 06, 10–12` 中间真有空段。
-- **Cameras / Lenses**:不同型号 / 镜头的数量。
-- **Orientation**:`{count} ({key})`,top 3 + `+N others`(值少时全列)。
-- **ISO / Aperture / Shutter / Focal length**:真实极值 `min – max`。
+`Embedded` 一行调用 extract 同样的路径拿到 libraw 选的主嵌入预览。
+
+### DIR 模式默认输出
+
+```
+Path          ~/Pictures/2024-trip
+File          29 RAWs (1.53 GiB)
+Date range    2024-06-01 → 2024-06-15  (15 days)
+Hour          06–09, 14–19
+Maker         3 (Canon, SONY, FUJIFILM)
+Camera        4 (EOS R5, X-E5, ILCE-7RM4A, +1 others)
+Lens          8
+ISO           100 – 6400
+Aperture      f/1.4 – f/16
+Shutter       1/8000 – 30s
+Focal length  14mm – 200mm
+Bias          -2 EV – +1 EV
+Rating        29 (unrated)
+Orientation   25 (landscape), 4 (portrait)
+Flash         1 (on), 28 (off)
+GPS           3 (yes), 26 (no)
+```
+
+- **Maker / Camera / Lens** 会根据终端宽度自适应降级(`3 names + N others` → `2 names + ...` → `1 name + ...`),保证不换行。管道输出时不截断。
+- **Date range** 括号里是起止的**日历分解**(三者相加 = 跨度)。
+- **Hour** 连续小时折成区间。
+- **Rating** 把 `0` 并入 `unrated`(区分对多数人没意义)。
+- **Flash / GPS** 缺 EXIF tag 的记录计作 `off` / `no`。
 
 ### `--by`
 
 ```bash
-rawkit stats samples/ --by month
-rawkit stats samples/ --by aperture
-rawkit stats samples/ --by camera,lens     # 两段顺序输出
+rawkit info samples/ --by camera
+rawkit info samples/ --by month
+rawkit info samples/ --by lens --more
+rawkit info samples/ --by aperture -w 'iso>=3200'
 ```
 
-带 `--by` 时**不再打前置概览**,只出 bar chart。要更深的分布分析就 `--json | python`,我们不在终端里跟 pandas 竞争。
+输出是纯净的表格(无 bar chart 无字符画面):
+
+```
+Camera
+
+  EOS R5         11  38%
+  ILCE-7RM4A      5  17%
+  X-E5            1   3%
+  ...
+```
+
+可用维度: `camera`(= `model`) · `lens` · `maker` · `orientation` · `iso` · `aperture`(= `fnumber`) · `focal` · `shutter` · `bias` · `rating` · `hour` · `year` · `month` · `day`。跟 `ls --where` 和 `organize --by` 是同一套词表。
+
+### 从某个桌下钻到具体文件
+
+目前只能重提一次 ls(看了 `--by iso` 发现 "≤1004 文件" 很感兴趣,然后):
+
+```bash
+rawkit ls samples -w 'iso<=100 and ...same predicate as before...'
+```
+
+shell 历史起来后手动拼 `iso<=100` 上去。未来 `info --by FOO -l` 会直接在桌下列出路径,但 V1 不会加(见 TODO)。
+
+---
+
+## `rawkit organize`
+
+按 EXIF 维度把 RAW 文件 move / copy 到分层目录。
+
+```bash
+rawkit organize [PATHS...] [-o DIR] [--by DIM[,DIM,...]] [-R] [-w EXPR]
+                            [--copy] [--prune] [-n / --dry-run] [-f]
+```
+
+| flag                | 含义 |
+| ------------------- | --- |
+| `PATHS`             | 要整理的文件或目录(默认当前目录) |
+| `-o / --output DIR` | 目标根。**不给 → 默认第一个输入目录**(in-place organize) |
+| `--by DIM[,DIM,...]`| 可选。逐维嵌套子目录:`--by camera,month` → `EOS R5/2024-01/foo.cr3`。不给 → 平铺到 DEST(配 `--where` 做 cherry-pick) |
+| `-R / --recursive`  | 递归扫描源目录 |
+| `-w / --where EXPR` | EXIF 谓词过滤(同 `ls --where`) |
+| `--copy`            | 复制而不是移动(默认 move) |
+| `--prune`           | 整理后顺手 rmdir 源目录树里所有空的非隐藏子目录(仅含 `.DS_Store` 的也算)。`.git/` 类 dotfile 目录永不动 |
+| `-n / --dry-run`    | 只打印计划,不动 filesystem |
+| `-f / --overwrite`  | 目标已存在时覆盖(默认 skip) |
+
+### 典型用法
+
+```bash
+# 按月分 — 最常见
+
+rawkit organize ~/dump -o ~/sorted --by month
+# → ~/sorted/2024-01/, ~/sorted/2024-02/, ...
+
+# 嵌套(年/月)
+rawkit organize ~/dump -o ~/sorted --by year,month
+
+# 机型 + 年
+rawkit organize ~/dump -o ~/sorted --by camera,year -R
+
+# in-place(不写 -o):在 ~/Pictures 里原地按月整理
+rawkit organize ~/Pictures --by month
+
+# cherry-pick(无 --by,平铺到单个目录)
+rawkit organize ~/dump -o ~/keepers -R -w 'rating>=4'
+rawkit organize ~/dump -o ~/lowlight -w 'iso>=3200'
+
+# 顺手清理空文件夹(例如上一轮 `--by year` 留下来的空 `2021/`)
+rawkit organize ~/Pictures --by month --prune
+
+# 第一次跑陌生目录先看计划
+rawkit organize ~/Pictures -o ~/sorted --by month -n
+```
+
+### 默认行为(不需要你做的)
+
+- **是 move 不是 copy** — 除非 `--copy`。
+- **同名 `.xmp` / `.jpg` sidecar 跟 RAW 一起搬** — LrC 的 rating / develop 不会孤立。
+- **缺 EXIF 值的文件进 `_unknown/`** — 下划线前缀让它排到最上面。
+- **同次运行内目标冲突 fail-fast** — 正常路径 + 大小写不敏感(macOS APFS / Windows)都检。冲突上报告连同源文件列表,一个文件不动,exit 1。
+- **目标已存在默认 skip**,`-f` 才覆盖。
+- **桌名里的 `/`(`f/2.8`、`1/250`)被替换为 `_`**(`f_2.8`、`1_250`)避免路径嵌套。
+- **`--prune` 只扫非隐藏子目录**。仅含 `.DS_Store` 算空;有任何用户文件不动。根目录从不被删。
 
 ---
 
@@ -202,7 +313,7 @@ rawkit stats samples/ --by camera,lens     # 两段顺序输出
 `hour` / `year` / `month` / `day` 是**整数桶 ID**,比较即桶号比较:
 
 - `hour > 6` ≡ `hour >= 7`,意思是"7 点桶或之后",**6:30 不在内**。
-- `month == 11` 选"任意年的 11 月",跟 `--by month`(YYYY-MM 历时桶)是不同的语义,两者配合可以写出"我历年 11 月的密度对比":`stats --by month -w 'month==11'`。
+- `month == 11` 选"任意年的 11 月",跟 `--by month`(YYYY-MM 历时桶)是不同的语义,两者配合可以写出"我历年 11 月的密度对比":`info --by month -w 'month==11'`。
 - 想做"6:00:00 这个时刻之后"用 `time > "06:00:00"`,跟整数桶不重叠。
 - `>` / `>=` 在整数桶上自然重合(SQL `WHERE month > 6` 也是这个意思),不是 bug。
 
@@ -248,4 +359,5 @@ ls -w 'month==11 and year>=2023'            # 2023 起每年的 11 月
 ## 当前已知坑
 
 - `rawkit ls` 在某些写了非标准 EXIF 的 RAW 上(如 Leica M11 Monochrom 缺 `EXIF:FNumber`)历史上会读错;**已经针对 ISO 和 Aperture 做了 EXIF 组锁定 + APEX 反算的 fallback**,但其他字段的类似坑随时可能浮现——dogfood 撞到欢迎报。
-- `stats --by hour` 用分段格式(`02–04, 22–23`),所以不会再有"中间空段被压平"的歧义。
+- `info --by hour` 用分段格式(`02–04, 22–23`),中间空段不会被压平。
+- `focal` 字段是镜头实际焦距,不会自动算 35mm 等效;裁剪画幅(APS-C / m4/3) 上看到的是裸焦距。详 [TODO.md](TODO.md)。

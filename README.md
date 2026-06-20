@@ -12,17 +12,19 @@
 
 **内测中**。当前只在作者自己机器上跑。命令名、flag、输出格式都可能变。在拿到一个稳定 surface 之前,不会发布到 PyPI、不会写 Homebrew formula、不会有公开链接。
 
-## V1 surface(目标 5 个命令)
+## V1 surface
 
-| 命令         | 用途                                          | 已实现 |
-| ----------- | -------------------------------------------- | ------ |
-| `ls`        | 表格视图,一行一文件                            | ✓      |
-| `info`      | 描述视图:单文件 = 全字段;文件夹 = 整体 summary;`--by` 钻维度 | 部分(目前还叫 `stats`,只做文件夹版) |
-| `extract`   | 把嵌入 JPEG 拽出来,扔到指定目录              | ✓      |
-| `render`    | 完整 RAW 解码(libraw)写出 JPEG/TIFF/PNG,支持 `--long/--short/--mp` | ✓      |
-| `organize`  | 按 `--by` 把文件 move 到分层目录            | ✗      |
+五个命令,全部已实现。
 
-当前实际能跑的是 `ls` / `extract` / `render` / `stats` 四个。从这些到 V1 的迁移路径在 [TODO.md](TODO.md)。具体命令用法见 [USAGE.md](USAGE.md)。
+| 命令         | 用途                                          |
+| ----------- | -------------------------------------------- |
+| `ls`        | 表格视图,一行一文件                            |
+| `info`      | 描述视图:单文件 = 全字段;文件夹 = 整体 KV summary;`--by DIM` 钻一个维度 |
+| `extract`   | 把嵌入 JPEG 拽出来,扔到指定目录              |
+| `render`    | libraw 解码 RAW 写出 JPEG/TIFF/PNG,支持 `--long/--short/--mp` |
+| `organize`  | 按 `--by` 把文件 move / copy 到分层目录,可选 `--prune` 清空残目录 |
+
+具体命令用法见 [USAGE.md](USAGE.md)。
 
 ## 设计原则
 
@@ -44,7 +46,8 @@
 - **catalog / 索引数据库**:违反 stateless
 - **map / GPS viewer**:要打开浏览器或地图工具,违反单一职责
 - **自带绘图**:matplotlib 已经很好
-- **analyze 工具(`stats` 那个方向)**:不跟 pandas 竞争,V1 砍
+- **独立的 `stats` 命令**:已折进 `info --by`,不另设
+- **多张内嵌 JPEG 枚举**:info 的 Embedded 行只显示 extract 实际会给的那张;列全部 v1 不做
 
 可能在 V1.x 加但 V1 不做:`verify`(文件完整性) / `duplicates`(去重)。
 
