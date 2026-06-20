@@ -99,14 +99,16 @@ def test_summary_by_camera_renders_section(tmp_path, fake_exif) -> None:
     result = runner.invoke(app, ["summary", str(tmp_path), "--by", "camera"])
     assert result.exit_code == 0
     out = result.stdout
-    assert "Camera" in out
     assert "EOS R5" in out
     assert "100%" in out
     # --by suppresses the default KV view.
     assert "Date range" not in out
+    # Bare rows: no title, no caption, no leading indent, no chart chrome.
     assert "█" not in out
     assert "──" not in out
     assert "By camera" not in out
+    assert not out.startswith("Camera")
+    assert not out.startswith("  ")
 
 
 def test_summary_by_unknown_dim_exits_2(tmp_path, fake_exif) -> None:
@@ -123,13 +125,23 @@ def test_summary_by_multidim_not_yet_supported(tmp_path, fake_exif) -> None:
     assert "multi-dim" in result.stderr
 
 
-def test_summary_by_filter_caption(tmp_path, fake_exif) -> None:
+def test_summary_by_pipe_and_local_where_match(tmp_path, fake_exif) -> None:
+    """ls -w | summary --by  and  summary --by -w  must produce identical
+    output. The --by view shows the data, not the provenance."""
     (tmp_path / "a.ARW").write_bytes(b"x")
-    result = runner.invoke(
+    (tmp_path / "b.CR3").write_bytes(b"x")
+
+    local = runner.invoke(
         app, ["summary", str(tmp_path), "--by", "camera", "--where", "iso>=50"]
     )
-    assert result.exit_code == 0
-    assert "filter: iso>=50" in result.stdout
+    piped = runner.invoke(
+        app, ["summary", "-", "--by", "camera"],
+        input="\n".join(str(p) for p in (tmp_path / "a.ARW", tmp_path / "b.CR3")) + "\n",
+    )
+    assert local.exit_code == 0 and piped.exit_code == 0
+    assert local.stdout == piped.stdout
+    # No filter caption sneaks back in.
+    assert "filter:" not in local.stdout
 
 
 # --- pipe input (the new capability) ----------------------------------------

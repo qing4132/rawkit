@@ -508,22 +508,18 @@ _INFO_BY_DIMS: dict[str, tuple[str, str]] = {
 }
 
 
-def _render_info_by(stats: dict[str, Any], dim: str, *, where: str) -> str:
-    """Single-dim partition view: title + indented bucket rows.
+def _render_info_by(stats: dict[str, Any], dim: str) -> str:
+    """Single-dim partition view: bare bucket rows.
 
-    No bars, no horizontal rule. Plain count and percent share, aligned.
-    Always shows all buckets — if a dim's output ever grows too big to
-    scroll comfortably, add a generic `--limit N` later.
+    No title, no filter caption, no indent — the data IS the answer.
+    The user knows what they queried; we don't editorialize. (`--where`
+    on the local invocation and `--where` on an upstream `ls` look the
+    same after the pipe collapses them anyway.)
     """
-    title, stats_key = _INFO_BY_DIMS[dim]
+    _title, stats_key = _INFO_BY_DIMS[dim]
     items = stats.get(stats_key, [])
     if not items:
-        head = [title]
-        if where:
-            head.append(f"  filter: {where}")
-        head.append("")
-        head.append("  no data")
-        return "\n".join(head)
+        return "no data"
 
     rows: list[tuple[str, str, str]] = []
     for it in items:
@@ -533,13 +529,9 @@ def _render_info_by(stats: dict[str, Any], dim: str, *, where: str) -> str:
     key_w = max(len(k) for k, _, _ in rows)
     count_w = max(len(c) for _, c, _ in rows)
 
-    lines = [title]
-    if where:
-        lines.append(f"  filter: {where}")
-    lines.append("")
-    for k, c, p in rows:
-        lines.append(f"  {k:<{key_w}}  {c:>{count_w}}  {p}")
-    return "\n".join(lines)
+    return "\n".join(
+        f"{k:<{key_w}}  {c:>{count_w}}  {p}" for k, c, p in rows
+    )
 
 
 def _build_info_file_record(raw: Path, record: dict[str, Any]) -> dict[str, Any]:
@@ -2046,7 +2038,7 @@ def summary(
     if dim is None:
         typer.echo(_render_info_dir(stats_data, paired_records, path_display=path_display, where=where))
     else:
-        typer.echo(_render_info_by(stats_data, dim, where=where))
+        typer.echo(_render_info_by(stats_data, dim))
 
 
 
