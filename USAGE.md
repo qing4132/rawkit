@@ -111,7 +111,7 @@ Default = a scalar KV block (count, total size, date range, top maker/camera/len
 | `-w / --where EXPR` | filter (same DSL as `ls`) |
 | `-R / --recursive` | walk subdirs |
 | `--by DIM` | partition by one dim (see list below); suppresses the default KV view |
-| `--json` | one JSON object with the full aggregation |
+| `--json` | one JSON object: `paths` (every covered RAW, absolute) + `total{}` + `by_<dim>` keys mirroring the `--by` vocabulary |
 
 ### Default KV block
 
@@ -133,6 +133,8 @@ Flash         1 (on), 28 (off)
 GPS           3 (yes), 26 (no)
 ```
 
+No `Path` row: any parent-dir display would falsely imply "this dir contains exactly these RAWs", which `--where` and pipes routinely violate. The set is whatever you put in front of summary; you already know where it came from.
+
 Maker / Camera / Lens rows auto-shrink (drop name examples, keep count + "+others") to fit terminal width. Non-TTY output keeps the full text.
 
 ### `--by`
@@ -146,7 +148,7 @@ rawkit summary samples/ --by aperture -w 'iso>=3200'
 rawkit ls -R -w 'rating>=4' | rawkit summary --by lens
 ```
 
-Output: title + indented `key  count  pct%` rows. No bar chart, no horizontal rule.
+Output: bare rows of `key  count  pct%`, flush-left. No title, no filter caption, no chart chrome — the data IS the answer, and two equivalent invocations (`ls -w X | summary --by Y` vs `summary --by Y -w X`) produce byte-identical output.
 
 Available dims (shared with `ls --where` field names and `organize --by`):
 
@@ -356,7 +358,7 @@ ls -w 'month==11 and year>=2023'               # Novembers 2023+
 
 - exit codes: **0** = success / **1** = partial failure or fail-fast refusal / **2** = usage error
 - stdout = data only; progress + errors go to stderr (pipe-friendly)
-- `--json` is JSONL (newline-delimited objects, one per file)
+- `--json` shape: `ls` and `info` emit JSONL (one object per RAW); `summary` emits one aggregated object
 - file-not-found errors are human-readable, no Python traceback
 
 ## Known quirks

@@ -10,7 +10,7 @@ This is my (@qing4132) tool for my own RAW workflow. Public so anyone interested
 
 - `ls` — table of RAW files with key EXIF (auto-emits paths when piped)
 - `info` — full per-file EXIF detail; accepts files, dirs, or piped paths
-- `summary` — aggregate stats over a set (count, ranges, top values; `--by FIELD` for bucket breakdown)
+- `summary` — aggregate stats over a set (count, ranges, top values; `--by DIM` for bucket breakdown)
 - `extract` — pull the embedded SOOC JPEG out of each RAW (fast, no decode)
 - `render` — libraw demosaic → JPEG/TIFF/PNG (slower, full sensor resolution)
 - `organize` — move/copy files into a folder tree keyed by EXIF dimensions
