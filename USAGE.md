@@ -1,6 +1,6 @@
 # Usage
 
-Seven commands: `ls` / `info` / `summary` / `extract` / `render` / `organize` / `reveal`.
+Six commands: `ls` / `info` / `summary` / `extract` / `organize` / `reveal`.
 
 All commands that take a set of files share one path-ingestion rule: positional `PATHS` (files or dirs, `-R` to recurse), `-` to read paths from stdin explicitly, or just pipe paths in (auto-detected). `ls` is the canonical selector — its piped output is one absolute path per line, ready to feed any other command.
 
@@ -198,38 +198,6 @@ rawkit extract . -o /tmp/keepers -w 'rating>=4'            # rated only
 
 ---
 
-## `render` — libraw demosaic to JPEG/TIFF/PNG
-
-```bash
-rawkit render [PATHS...] -o DIR [-R] [-f] [-w EXPR]
-              [--format jpeg|tiff|png] [-q N]
-              [--long N | --short N | --mp N]
-rawkit render -             # paths from stdin
-rawkit ls -s shutter -r | head -20 | rawkit render -o longexp/
-```
-
-Slower than extract (~0.5–2s per file, real demosaic work). Colour drifts from SOOC — libraw uses neutral sRGB defaults, not camera Picture Styles. Use for files whose embedded JPEG is too small (Sony A7R IV embeds only 1616×1080) or when you want full-sensor output regardless.
-
-| flag | meaning |
-|------|---------|
-| `-o / --output DIR` | output dir (default `./renders`) |
-| `--format FMT` | jpeg / tiff / png (default jpeg) |
-| `-q / --quality N` | JPEG quality (default 90; ignored for tiff/png) |
-| `--long / --short / --mp N` | downscale (mutually exclusive) |
-| `-f / --overwrite` | overwrite |
-| `-w / --where EXPR` | filter |
-| `-R / --recursive` | recurse + mirror subtree under output |
-
-```bash
-rawkit render *.ARW -o out/                                # default jpeg q90
-rawkit render . -o web/ --long 2400 -q 85                 # web sizing
-rawkit render . -o tiff/ --format tiff -w 'rating==5'      # archival TIFF
-```
-
-Same output-path rules as `extract` (subtree mirror, intra-run collision fail-fast).
-
----
-
 ## `organize` — move RAWs into a folder tree by EXIF
 
 ```bash
@@ -304,7 +272,7 @@ rawkit ls -R -w 'iso>=3200' -s iso -r | head -5 | rawkit reveal
 
 ## `--where` DSL
 
-Shared across `ls`, `info`, `summary`, `extract`, `render`, `organize`. lark-based parser, no `eval()`.
+Shared across `ls`, `info`, `summary`, `extract`, `organize`. lark-based parser, no `eval()`.
 
 ### Fields
 

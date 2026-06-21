@@ -15,8 +15,9 @@ IFD0 JPEG, Ricoh GR III DNG's 6000x4000 SOOC frame).
 The 160x120-class navigation thumbnail is intentionally out of scope —
 it's too small to be useful. If a user really wants it we'll add a flag.
 
-Re-rendering from raw Bayer (with possible colour drift) is `rawkit render`,
-not this command.
+Re-rendering from raw Bayer with libraw defaults is intentionally not
+provided — if the embedded JPEG isn't enough, develop in your usual RAW
+processor (Lightroom / Capture One / darktable).
 """
 
 from __future__ import annotations

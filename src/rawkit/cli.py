@@ -15,10 +15,9 @@ from rawkit.aggregate import build_stats, _bytes_human, _hours_inline
 from rawkit.exif import safe_batch_read
 from rawkit.extract import ExtractError, extract_jpeg
 from rawkit.query import QueryError, compile_where
-from rawkit.render import RenderError, render as render_raw, suffix_for
 
 app = typer.Typer(
-    help="rawkit — RAW photography swiss-army CLI",
+    help="rawkit — a personal RAW photo CLI",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -147,7 +146,7 @@ def _output_relpath(raw: Path, inputs: Iterable[Path]) -> Path:
       FIRST match wins. This is rare; users don't normally pass
       overlapping dirs.
 
-    This is what lets `extract -R` / `render -R` (and eventually
+    This is what lets `extract -R` (and eventually
     `organize`) preserve folder structure in the output instead of
     silently flattening everything into one dir — where two RAWs with
     the same basename in different subdirs would collide.
@@ -908,7 +907,7 @@ def _sort_records(
 def _filter_paths_by_where(raws: list[Path], where_expr: str) -> list[Path]:
     """Filter `raws` to those whose EXIF satisfies the --where predicate.
 
-    Shared by extract/render so they can accept the same DSL as `ls`. Reads
+    Shared by extract so it can accept the same DSL as `ls`. Reads
     EXIF for the candidate paths in ONE exiftool invocation, applies the
     compiled predicate, and returns the surviving paths in the original
     order. Returns `raws` unchanged when `where_expr` is empty.
@@ -1235,204 +1234,6 @@ def extract(
     if n_failed or n_skipped:
         typer.echo(
             f"\n{n_ok} extracted, {n_skipped} skipped, {n_failed} failed",
-            err=True,
-        )
-    if n_failed:
-        raise typer.Exit(code=1)
-
-
-# --- render command ---------------------------------------------------------
-
-class RenderFormat(str, Enum):
-    """Output formats render can produce. JPEG = small/lossy;
-    TIFF/PNG = lossless (PNG is smaller for low-entropy images, TIFF for
-    photographic content; both are appropriate for archival hand-off)."""
-    jpeg = "jpeg"
-    tiff = "tiff"
-    png  = "png"
-
-
-@app.command("render")
-def cmd_render(
-    paths: list[Path] = typer.Argument(
-        None,
-        help="Files or directories to render. Defaults to current directory. "
-             "Directories are listed top-level only unless -R.",
-    ),
-    output: Path = typer.Option(
-        Path("./renders"),
-        "--output",
-        "-o",
-        metavar="DIR",
-        help="Output directory. Created if missing. Each render is written as "
-             "<DIR>/<basename>.<ext> (ext from --format).",
-    ),
-    output_format: RenderFormat = typer.Option(
-        RenderFormat.jpeg,
-        "--format",
-        case_sensitive=False,
-        help="Output container.",
-    ),
-    quality: int = typer.Option(
-        90,
-        "--quality",
-        "-q",
-        min=1,
-        max=100,
-        help="JPEG quality (1-100). Ignored for TIFF/PNG (lossless).",
-    ),
-    long_edge: int = typer.Option(
-        0,
-        "--long",
-        metavar="N",
-        help="Downscale so the LONG edge is at most N pixels (LANCZOS). "
-             "Mutually exclusive with --short / --mp.",
-    ),
-    short_edge: int = typer.Option(
-        0,
-        "--short",
-        metavar="N",
-        help="Downscale so the SHORT edge is at most N pixels. Useful for "
-             "social-media sizing (Instagram = 1080 short). "
-             "Mutually exclusive with --long / --mp.",
-    ),
-    megapixels: float = typer.Option(
-        0.0,
-        "--mp",
-        metavar="N",
-        help="Downscale so total pixels ≤ N million. e.g. --mp 12 ≈ 12-megapixel "
-             "output. Mutually exclusive with --long / --short.",
-    ),
-    recursive: bool = typer.Option(
-        False,
-        "--recursive",
-        "-R",
-        help="Recurse into subdirectories (default is top-level only).",
-    ),
-    overwrite: bool = typer.Option(
-        False,
-        "--overwrite",
-        "-f",
-        help="Overwrite existing output files. Default: skip with a warning.",
-    ),
-    where: str = typer.Option(
-        "",
-        "--where",
-        "-w",
-        metavar="EXPR",
-        help="Filter inputs by an EXIF predicate (same DSL as `ls --where`). "
-             "Examples: 'iso>3200', 'date>=\"2024-01-01\" and model~\"R5\"'. "
-             "Triggers one exiftool call to read EXIF for the candidate set.",
-    ),
-) -> None:
-    """Demosaic each RAW via libraw and encode as JPEG/TIFF/PNG.
-
-    Opposite of `extract`: where extract hands back the camera's already-baked
-    SOOC JPEG (fast, 100% SOOC), render decodes the raw Bayer pattern ourselves
-    through libraw and encodes the result fresh.
-
-    \b
-    Colour science WILL drift from SOOC. libraw's defaults are a neutral
-    sRGB pipeline, not Canon Picture Style / Fuji Film Simulation / etc.
-    If you need SOOC colour, use `extract`. If you need fine-grained
-    rendering control (WB, curves, sharpening), use Lightroom / Capture One.
-
-    Render is the right tool when the camera didn't embed a big enough
-    JPEG (e.g. Sony A7R IV only embeds 1616x1080) or when you want a
-    full-sensor-resolution output that no embedded JPEG provides.
-
-    Throughput: ~0.5-2 seconds per file (real demosaic work), vs
-    extract's ~30ms per file. Don't render thousands when extract
-    would do.
-    """
-    # Keep resize UX identical to `extract`.
-    set_dims = [
-        name
-        for name, val in (("--long", long_edge), ("--short", short_edge), ("--mp", megapixels))
-        if val
-    ]
-    if len(set_dims) > 1:
-        raise typer.BadParameter(
-            f"{' / '.join(set_dims)} are mutually exclusive — pick one"
-        )
-
-    inputs = _ingest_paths(paths) or [Path(".")]
-    raws = _collect_raws(inputs, recursive=recursive)
-    if not raws:
-        return
-    raws = _filter_paths_by_where(raws, where)
-    if not raws:
-        return
-
-    output.mkdir(parents=True, exist_ok=True)
-    suffix = suffix_for(output_format.value)
-    out_paths: list[Path] = [
-        (output / _output_relpath(r, inputs)).with_suffix(suffix) for r in raws
-    ]
-    collisions: dict[str, list[tuple[Path, Path]]] = {}
-    for raw, out_path in zip(raws, out_paths):
-        key = str(out_path).casefold()
-        collisions.setdefault(key, []).append((out_path, raw))
-    duplicated = {k: pairs for k, pairs in collisions.items() if len(pairs) > 1}
-    if duplicated:
-        typer.echo(
-            f"rawkit: refusing to render — {len(duplicated)} output collision(s):",
-            err=True,
-        )
-        for pairs in duplicated.values():
-            unique_outs = sorted({op for op, _ in pairs}, key=str)
-            head = str(unique_outs[0])
-            if len(unique_outs) > 1:
-                head += f"  (case variants: {', '.join(p.name for p in unique_outs[1:])})"
-            typer.echo(f"  {head}", err=True)
-            for _, src in pairs:
-                typer.echo(f"    ← {src}", err=True)
-        typer.echo(
-            "Hint: pass the conflicting RAWs via a common parent dir with -R "
-            "so they land under distinct subdirs, or rename one source.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    long_arg: int | None = long_edge if long_edge > 0 else None
-    short_arg: int | None = short_edge if short_edge > 0 else None
-    mp_arg: float | None = megapixels if megapixels > 0 else None
-
-    n_ok = 0
-    n_skipped = 0
-    n_failed = 0
-    for raw, out_path in zip(raws, out_paths):
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        if out_path.exists() and not overwrite:
-            typer.echo(
-                f"{raw.name}: skip (exists, use -f to overwrite)", err=True
-            )
-            n_skipped += 1
-            continue
-        try:
-            result = render_raw(
-                raw,
-                output_format=output_format.value,
-                quality=quality,
-                long_edge=long_arg,
-                short_edge=short_arg,
-                megapixels=mp_arg,
-            )
-        except RenderError as e:
-            typer.echo(f"{raw.name}: failed — {e}", err=True)
-            n_failed += 1
-            continue
-        out_path.write_bytes(result.data)
-        typer.echo(
-            f"{raw.name}: {result.width}x{result.height} "
-            f"{output_format.value} -> {out_path}",
-            err=True,
-        )
-        n_ok += 1
-
-    if n_failed or n_skipped:
-        typer.echo(
-            f"\n{n_ok} rendered, {n_skipped} skipped, {n_failed} failed",
             err=True,
         )
     if n_failed:
@@ -1817,7 +1618,7 @@ def organize(
             typer.echo("nothing to organize", err=True)
         return
 
-    # Collision preflight (intra-run, case-fold) — matches extract/render.
+    # Collision preflight (intra-run, case-fold) — matches extract.
     collisions: dict[str, list[tuple[Path, Path]]] = {}
     for src, tgt in moves:
         key = str(tgt).casefold()

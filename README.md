@@ -1,6 +1,6 @@
 # rawkit
 
-A personal RAW photo CLI. Seven commands — list, describe per-file, summarize a set, extract or render JPEGs, organize files, reveal in Finder — that compose through Unix pipes.
+A personal RAW photo CLI. Six commands — list, describe per-file, summarize a set, extract JPEGs, organize files, reveal in Finder — that compose through Unix pipes.
 
 ## Status
 
@@ -12,7 +12,6 @@ This is my (@qing4132) tool for my own RAW workflow. Public so anyone interested
 - `info` — full per-file EXIF detail; accepts files, dirs, or piped paths
 - `summary` — aggregate stats over a set (count, ranges, top values; `--by DIM` for bucket breakdown)
 - `extract` — pull the embedded SOOC JPEG out of each RAW (fast, no decode)
-- `render` — libraw demosaic → JPEG/TIFF/PNG (slower, full sensor resolution)
 - `organize` — move/copy files into a folder tree keyed by EXIF dimensions
 - `reveal` — open Finder window(s) with selected RAWs (macOS only)
 

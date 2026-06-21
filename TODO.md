@@ -13,7 +13,7 @@ Personal notes on what's deferred and what I deliberately won't do. Not a public
 
 ## Permanently rejected (don't re-debate)
 
-- **Edit / develop / colour adjustments** — that's GUI territory (LrC, Capture One, darktable). rawkit's `render` is libraw defaults only.
+- **Edit / develop / colour adjustments** — that's GUI territory (LrC, Capture One, darktable). rawkit doesn't demosaic at all anymore; if the embedded SOOC JPEG isn't enough, develop in your usual RAW processor.
 - **AI features** — not here.
 - **Web UI / GUI** — CLI-first stays.
 - **LrC XMP read/write** — explicitly not interop with Adobe.

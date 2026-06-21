@@ -1,4 +1,4 @@
-"""Shared image-resize logic for extract/render commands.
+"""Shared image-resize logic for the extract command.
 
 We accept three independent target dimensions:
   - long_edge   : downscale so max(w, h) ≤ N
