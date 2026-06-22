@@ -1918,10 +1918,19 @@ def reveal(
     # and selects all of them in one shot.
     for files in by_parent.values():
         aliases = ", ".join(f'(POSIX file "{f}") as alias' for f in files)
+        # Finder's `reveal {list}` is unreliable for multi-selection: on
+        # current macOS it usually leaves only the LAST item highlighted,
+        # the rest visible-but-unselected. The robust pattern is to reveal
+        # ONE item (forcing the parent window to open and the column-/icon-
+        # /list-view to scroll into the right slice), then issue `select
+        # {full list}` against that now-open window. Tested on macOS 14+:
+        # all N items end up genuinely multi-selected.
         script = (
             'tell application "Finder"\n'
             '    activate\n'
-            f'    reveal {{{aliases}}}\n'
+            f'    set _items to {{{aliases}}}\n'
+            '    reveal item 1 of _items\n'
+            '    select _items\n'
             'end tell\n'
         )
         try:

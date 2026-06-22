@@ -124,6 +124,11 @@ def test_reveal_groups_by_parent(tmp_path, capture_osascript) -> None:
     assert "x.ARW" in script
     assert "y.CR3" in script
     assert "tell application \"Finder\"" in script
+    # Uses the robust reveal-then-select pattern (multi-selection only
+    # works reliably this way; `reveal {list}` alone leaves only the
+    # last item highlighted on current macOS).
+    assert "reveal item 1 of" in script
+    assert "select _items" in script
 
 
 def test_reveal_separate_windows_for_different_parents(tmp_path, capture_osascript) -> None:
