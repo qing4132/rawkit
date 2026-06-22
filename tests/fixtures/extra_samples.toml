@@ -1,0 +1,77 @@
+# Extra RAW samples manifest — formats not covered by samples/ in this repo.
+#
+# rawkit's _exif_lite.py needs to handle every format in cli.RAW_EXTS (38).
+# samples/ ships ~8 formats (CR3/ARW/NEF/DNG/RAF/RW2/ORF/3FR). The remaining
+# ~30 formats are stress-tested by downloading public-domain or
+# permissively-licensed samples to samples/extras/ and running the existing
+# cross-backend equivalence tests against them:
+#
+#   uv run python scripts/fetch_samples.py
+#   RAWKIT_TEST_SAMPLES=samples/extras uv run pytest tests/test_exif_lite.py -v
+#
+# Each entry is:
+#
+#   [[file]]
+#   url      = "https://..."          # direct, stable download URL
+#   sha256   = ""                     # leave empty on first add; fetch_samples.py
+#                                     # will print the observed hash so you can fill it in
+#   format   = "cr2"                  # lowercase extension (without dot)
+#   camera   = "Canon EOS 5D Mark II" # for the report — what camera produced it
+#   license  = "CC0"                  # one of: CC0, CC-BY, CC-BY-SA, public-domain,
+#                                     # "raw.pixls.us-CC0", etc. Must be redistributable
+#                                     # OR fetched fresh each time (we don't redistribute).
+#   source   = "raw.pixls.us"         # human label for the source
+#   notes    = ""                     # optional: edge case this sample exercises
+#
+# Hash-empty workflow (nix/bazel style):
+#   1. Add a new [[file]] with sha256 = ""
+#   2. Run fetch_samples.py — it downloads, computes sha256, prints it, and
+#      keeps the file (warning that the hash is unverified).
+#   3. Copy the printed sha256 back into this manifest. Re-run to verify.
+#
+# Suggested sources (vetted, long-lived, redistributable):
+#   * raw.pixls.us           — CC0, ~700 samples covering most modern cameras
+#                              <https://raw.pixls.us/>
+#   * LibRaw/raw-samples     — LibRaw maintainer's reference set on GitHub
+#                              <https://github.com/LibRaw/raw-samples>
+#   * rawsamples.ch          — personal-non-commercial license (read carefully)
+#                              <https://www.rawsamples.ch/>
+#   * Wikimedia Commons      — CC0/CC-BY, limited RAW selection
+#
+# Priority formats to cover (in order of real-world prevalence):
+#   1. cr2  — Canon 2004–2018 (5D classic, 6D, 7D, etc.) — *huge* user base
+#   2. x3f  — Sigma Foveon, very weird sensor & file layout
+#   3. pef  — Pentax current bodies (K-1, K-3)
+#   4. nrw  — Nikon compacts
+#   5. iiq  — Phase One medium format (large files; exercise windowed reads)
+#   6. srw  — Samsung NX series (discontinued but stock survives)
+#   7. crw  — Canon legacy pre-2004 (very different from CR2)
+#   8. rwl  — Leica selected bodies
+#   9. mef / mos — Mamiya / Leaf
+#   10. erf — Epson
+#
+# Manifest entries below. Start empty; fill in as samples are vetted.
+# Each entry is a TOML [[file]] table.
+
+# ----------------------------------------------------------------------------
+# Examples (commented out — uncomment after verifying the URL still works and
+# the license is what you expect; then run fetch_samples.py to compute sha256).
+# ----------------------------------------------------------------------------
+
+# [[file]]
+# url      = "https://raw.pixls.us/getfile.php/0001/nice/Canon%20-%20EOS%205D.CR2"
+# sha256   = ""
+# format   = "cr2"
+# camera   = "Canon EOS 5D"
+# license  = "CC0"
+# source   = "raw.pixls.us"
+# notes    = "Canon's first full-frame; CR2 anchor sample"
+
+# [[file]]
+# url      = "https://raw.pixls.us/getfile.php/0001/nice/Sigma%20-%20SD15.X3F"
+# sha256   = ""
+# format   = "x3f"
+# camera   = "Sigma SD15"
+# license  = "CC0"
+# source   = "raw.pixls.us"
+# notes    = "Foveon 3-layer sensor; rare format"
