@@ -2,6 +2,12 @@
 
 A personal RAW photo CLI. Six commands — list, describe per-file, summarize a set, extract JPEGs, organize files, reveal in Finder — that compose through Unix pipes.
 
+```bash
+rawkit ls -R -w 'rating>=4' | rawkit summary --by lens     # what lenses do I shoot keepers with?
+rawkit ls -w 'iso>=3200' -s iso -r | head -5 | rawkit reveal  # show my five highest-ISO frames in Finder
+rawkit ls -R -w 'flash' | rawkit organize -o ~/flash-shots/  # corral every flash frame into one folder
+```
+
 ## Status
 
 This is my (@qing4132) tool for my own RAW workflow. Public so anyone interested can use it, but the roadmap is driven by what I personally need. Flags and commands may change without notice. Issues and PRs are welcome but replies are sporadic — fork if you need stability.
@@ -38,6 +44,12 @@ Upgrade:
 
 ```bash
 uv tool upgrade rawkit
+```
+
+Shell completion (one-time, picks up your shell automatically):
+
+```bash
+rawkit --install-completion
 ```
 
 ## Design

@@ -19,7 +19,6 @@ from rawkit.query import QueryError, compile_where
 app = typer.Typer(
     help="rawkit — a personal RAW photo CLI",
     no_args_is_help=True,
-    add_completion=False,
 )
 
 
