@@ -1,4 +1,21 @@
-"""Tests for rawkit.exif (the exiftool wrapper)."""
+"""Tests for rawkit.exif (the EXIF backend dispatcher + normalizer).
+
+The tests in this file fall in two buckets:
+
+  1. Normalizer / exiftool-backend tests (most of the file). These mock
+     out subprocess.run, so they're independent of any real RAW file or
+     exiftool install. They exercise:
+       * the `_FIELD_MAP` → rawkit-key collapse
+       * the datetime/date/time split and SubSec stitching
+       * orientation / flash / gps / model-prefix derivations
+     A module-level autouse fixture pins these onto the exiftool backend
+     (`RAWKIT_BACKEND=exiftool`) so the dispatcher routes there even though
+     the default is `lite`.
+
+  2. Lite-backend tests (`test_lite_*`). These exercise the rawpy +
+     _exif_lite path with real RAW samples when available — and the
+     cross-backend equivalence tests pit lite vs exiftool record-for-record.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +26,20 @@ from pathlib import Path
 import pytest
 
 from rawkit import exif
+
+
+@pytest.fixture(autouse=True)
+def _force_exiftool_backend(monkeypatch):
+    """Default this file's tests to the exiftool backend.
+
+    The lite backend is rawkit's runtime default, but every test in this
+    file pokes the legacy exiftool plumbing (mocked subprocess). Pinning
+    here is cleaner than scattering `monkeypatch.setenv` calls into every
+    test. Fixture is file-scoped (auto-discovered via test_exif.py imports
+    only); sibling files like test_exif_lite.py set backend env vars
+    explicitly per-test.
+    """
+    monkeypatch.setenv("RAWKIT_BACKEND", "exiftool")
 
 
 def test_batch_read_empty_paths_skips_exiftool(monkeypatch) -> None:
