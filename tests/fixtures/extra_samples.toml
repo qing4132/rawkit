@@ -54,24 +54,101 @@
 # Each entry is a TOML [[file]] table.
 
 # ----------------------------------------------------------------------------
-# Examples (commented out — uncomment after verifying the URL still works and
-# the license is what you expect; then run fetch_samples.py to compute sha256).
+# Manifest entries — one per RAW format that samples/ doesn't already cover.
+# Sources: raw.pixls.us (CC0 community sample collection, browsable Apache
+# autoindex at /data/<Make>/<Model>/<file>).
+#
+# On first `fetch_samples.py` run, sha256 fields are empty; the script
+# downloads the file, computes the hash, and prints it — paste it back
+# here and re-run to pin.
 # ----------------------------------------------------------------------------
 
-# [[file]]
-# url      = "https://raw.pixls.us/getfile.php/0001/nice/Canon%20-%20EOS%205D.CR2"
-# sha256   = ""
-# format   = "cr2"
-# camera   = "Canon EOS 5D"
-# license  = "CC0"
-# source   = "raw.pixls.us"
-# notes    = "Canon's first full-frame; CR2 anchor sample"
+[[file]]
+url      = "https://raw.pixls.us/data/Canon/EOS%2040D/_MG_0153.CR2"
+sha256   = "775c806358fedddec7622113a5e399a3330bd5a65e35e37ae1108d8bf58067be"
+format   = "cr2"
+camera   = "Canon EOS 40D"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Canon 2004-2018 era CR2 — huge installed base"
 
-# [[file]]
-# url      = "https://raw.pixls.us/getfile.php/0001/nice/Sigma%20-%20SD15.X3F"
-# sha256   = ""
-# format   = "x3f"
-# camera   = "Sigma SD15"
-# license  = "CC0"
-# source   = "raw.pixls.us"
-# notes    = "Foveon 3-layer sensor; rare format"
+[[file]]
+url      = "https://raw.pixls.us/data/Canon/Canon%20PowerShot%20A610/IMG_1574.CRW"
+sha256   = "4e75887580221ebca582f80b2caf15a177fa42e5e0b47ec1ce7b7c97ebc38318"
+format   = "crw"
+camera   = "Canon PowerShot A610"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Canon legacy pre-CR2 format — different magic and structure"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Sigma/DP1%20Merrill/SDIM0555.X3F"
+sha256   = "1392ea8149f8643e2654e4d0e3e79ea02a37fc6e7cf9209129718a357cad1d68"
+format   = "x3f"
+camera   = "Sigma DP1 Merrill"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Foveon 3-layer sensor; X3F is its own container, not TIFF"
+
+[[file]]
+url      = "https://raw.pixls.us/data/PENTAX/PENTAX%20K-r/IMGP4424.PEF"
+sha256   = "dd0d7b76d89039995d253adddcfb44d131414fad2179610d9ea4d8d4bb876b7b"
+format   = "pef"
+camera   = "Pentax K-r"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Pentax — TIFF-shaped but with private maker-note layout"
+
+[[file]]
+url      = "https://raw.pixls.us/data/NIKON%20CORPORATION/COOLPIX%20P1100/DSCN0173.NRW"
+sha256   = "706840f7a36c3852092d4aad0465e75920e04f1aa653adf31626c0c05ab41258"
+format   = "nrw"
+camera   = "Nikon Coolpix P1100"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Nikon compact format — NEF-like but with its own quirks"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Samsung/EX1/SAM_5548.SRW"
+sha256   = "a084890fd9d7995ceb746c18ecf5be48c95baf14286d5c0c480cc3daa25f3e37"
+format   = "srw"
+camera   = "Samsung EX1"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Samsung NX series — discontinued line but stock survives"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Phase%20One/IQ3%20100MP/Phase_One_IQ3_100MP_IIQ_S.IIQ"
+sha256   = "2dd56f2a7a57a7fc2123301009c1a7a10be002ed84a18470fc4d37e41760a66d"
+format   = "iiq"
+camera   = "Phase One IQ3 100MP"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Medium format; large file (~69 MB) exercises windowed reads"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Epson/R-D1s/EPSN3575.ERF"
+sha256   = "45bb0081baf1c813c7cd9e05b3e6ae734b90aba408dd1195118dc94dc6abbbb9"
+format   = "erf"
+camera   = "Epson R-D1s"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Epson rangefinder — TIFF-shaped"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Leaf/Aptus%2022/L_003172.mos"
+sha256   = "8a1a101cb3940b0648af54a721d92e6fb8612dd29a0909036ea2753196a00ec2"
+format   = "mos"
+camera   = "Leaf Aptus 22"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Leaf medium-format back — MOS container"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Minolta/ALPHA-7%20DIGITAL/PICT6107.MRW"
+sha256   = "f655f60d24e492cd2b8c46ac8bfd24f83d7696b49cdf2301ffd4f34857216248"
+format   = "mrw"
+camera   = "Minolta Alpha-7 Digital"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "Minolta — custom MRW header preamble before the TIFF block"

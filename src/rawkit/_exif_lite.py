@@ -78,6 +78,12 @@ T_SUBSEC_ORIG  = 0x9291   # SubSecTimeOriginal
 T_LENSMAKE     = 0xA433
 T_LENSMODEL    = 0xA434
 T_PSI          = 0x8833   # PhotographicSensitivity (EXIF 2.3+, often duplicates ISO)
+# ExifImageWidth/Height (0xA002/0xA003) live in ExifIFD and represent the
+# *main image* (i.e. raw frame) dimensions — distinct from IFD0:ImageWidth
+# which Phase One IIQ uses for the thumbnail. When present, these override
+# the IFD0/SubIFD heuristic because they're the explicit raw-frame size.
+T_EXIF_IMAGEWIDTH  = 0xA002
+T_EXIF_IMAGEHEIGHT = 0xA003
 
 # GPSIFD
 T_GPS_LATREF   = 0x0001
@@ -99,6 +105,7 @@ _SUBIFD_WANTED = frozenset({T_IMAGEWIDTH, T_IMAGEHEIGHT, T_NEWSUBFILE})
 _EXIF_WANTED = frozenset({
     T_EXPOSURETIME, T_FNUMBER, T_ISO, T_PSI, T_DTORIG, T_APEX_AV,
     T_BIAS, T_FLASH, T_FOCALLENGTH, T_SUBSEC_ORIG, T_LENSMAKE, T_LENSMODEL,
+    T_EXIF_IMAGEWIDTH, T_EXIF_IMAGEHEIGHT,
 })
 _GPS_WANTED = frozenset({
     T_GPS_LATREF, T_GPS_LAT, T_GPS_LONREF, T_GPS_LON,
@@ -234,9 +241,11 @@ def _parse_tiff(data: bytes, header_off: int = 0) -> dict[str, Any]:
         endian = ">"
     else:
         return {}
-    # TIFF magic byte: 0x002A standard, 0x0055 = Panasonic RW2/RAW.
+    # TIFF magic byte: 0x002A standard, 0x0055 = Panasonic RW2/RAW,
+    # 0x4F52 = Olympus ORF ('IIRO' / 'MMOR' header). All three keep the
+    # standard IFD layout; only the file-level magic differs.
     magic = struct.unpack_from(endian + "H", data, header_off + 2)[0]
-    if magic not in (0x002A, 0x0055):
+    if magic not in (0x002A, 0x0055, 0x4F52):
         return {}
     (ifd0_off_rel,) = struct.unpack_from(endian + "I", data, header_off + 4)
     # All IFD offsets inside the TIFF block are relative to the TIFF start.
@@ -365,6 +374,25 @@ def _copy_exif(out: dict[str, Any], exif_dir: dict[int, Any]) -> None:
         out["ISO"] = exif_dir[T_ISO]
     elif T_PSI in exif_dir:
         out["ISO"] = exif_dir[T_PSI]
+    # ExifImageWidth/Height (0xA002/0xA003) are the explicit main-frame
+    # dimensions. Phase One IIQ writes 640x480 (thumbnail) into IFD0 and the
+    # real 11608x8708 raw dimensions only here — without an override we'd
+    # report the thumbnail. But Canon CR2 writes a 1936x1288 preview into
+    # IFD0 (legit, what exiftool's default -ImageWidth selects too) and the
+    # raw 3888x2592 into ExifImageWidth — taking the larger there would
+    # disagree with the exiftool backend. Heuristic: only override when the
+    # current value is small enough to look like a thumbnail (< 1 megapixel).
+    # Modern raw sensors are always ≥ 1 MP; thumbnails are almost always
+    # below it (640x480 = 0.3 MP, 1024x768 = 0.8 MP).
+    ew = exif_dir.get(T_EXIF_IMAGEWIDTH)
+    eh = exif_dir.get(T_EXIF_IMAGEHEIGHT)
+    if isinstance(ew, int) and isinstance(eh, int) and ew > 0 and eh > 0:
+        cur_w = out.get("ImageWidth", 0)
+        cur_h = out.get("ImageHeight", 0)
+        cur_area = cur_w * cur_h if isinstance(cur_w, int) and isinstance(cur_h, int) else 0
+        if cur_area < 1_000_000 and ew * eh > cur_area:
+            out["ImageWidth"] = ew
+            out["ImageHeight"] = eh
 
 
 def _copy_named(out: dict[str, Any], src: dict[int, Any], mapping: dict[int, str]) -> None:
@@ -482,6 +510,141 @@ def _find_cr3_cmt_boxes(data: bytes) -> dict[bytes, bytes]:
 HEAD_SIZE = 256 * 1024
 
 
+def _find_jpeg_exif_tiff(buf: bytes, jpeg_off: int) -> int | None:
+    """Find the offset of the TIFF block inside a JPEG's APP1/Exif segment.
+
+    JPEG layout we walk: starts with 0xFFD8 (SOI), then a sequence of
+    marker segments. Most non-standalone markers carry a big-endian
+    uint16 length immediately after the marker byte (length includes the
+    2 length bytes). APP1 = 0xFFE1; the EXIF flavor of APP1 has a payload
+    that begins with the ASCII literal "Exif\\x00\\x00" — the TIFF block
+    starts 6 bytes into the payload, right after that signature.
+
+    Returns the absolute offset (within `buf`) of the TIFF header, or
+    None if the JPEG is malformed/truncated, the offset is out of range,
+    or no APP1/Exif segment is found before SOS (0xFFDA, start of image
+    data — past which there's no more metadata).
+    """
+    n = len(buf)
+    if not (0 <= jpeg_off < n - 4):
+        return None
+    if buf[jpeg_off : jpeg_off + 2] != b"\xff\xd8":
+        return None
+    i = jpeg_off + 2  # past SOI
+    while i < n - 4:
+        # Markers may be preceded by fill 0xFF bytes; skip them.
+        while i < n and buf[i] == 0xFF:
+            i += 1
+        if i >= n:
+            return None
+        marker = buf[i]
+        i += 1
+        # SOS = start of compressed image data; no more metadata after it.
+        if marker == 0xDA:
+            return None
+        # Standalone markers carry no length (SOI/EOI/TEM/RSTn).
+        if marker in (0xD8, 0xD9, 0x01) or 0xD0 <= marker <= 0xD7:
+            continue
+        if i + 2 > n:
+            return None
+        seg_len = struct.unpack_from(">H", buf, i)[0]
+        if seg_len < 2:  # malformed: length must include the 2 length bytes
+            return None
+        payload_off = i + 2
+        payload_end = i + seg_len
+        if payload_end > n:
+            return None
+        # APP1 (0xFFE1) with "Exif\0\0" prefix → TIFF block follows the prefix.
+        if marker == 0xE1 and buf[payload_off : payload_off + 6] == b"Exif\x00\x00":
+            return payload_off + 6
+        i = payload_end
+    return None
+
+
+def _parse_mrw(path: Path) -> dict[str, Any]:
+    """Minolta MRW (KONICA MINOLTA / late Minolta DSLRs).
+
+    Container layout: 4-byte magic '\\x00MRM' + big-endian uint32 total
+    length, then a sequence of named sub-blocks where each block tag is
+    4 bytes: a leading 0x00 followed by 3 ASCII letters (e.g. '\\x00PRD',
+    '\\x00WBG', '\\x00RIF', '\\x00TTW'). After the tag comes a big-endian
+    uint32 length + that many bytes of payload. The '\\x00TTW' block
+    payload is a self-contained standard TIFF that holds the EXIF —
+    once we find it, we can hand it to _parse_tiff.
+    """
+    head = _read_file_head(path, HEAD_SIZE)
+    if len(head) < 8 or head[:4] != b"\x00MRM":
+        return {}
+    i = 8  # first sub-block starts right after the 8-byte file header
+    end = len(head)
+    while i + 8 <= end:
+        name = head[i : i + 4]
+        block_len = int.from_bytes(head[i + 4 : i + 8], "big")
+        data_off = i + 8
+        if name == b"\x00TTW":
+            return _parse_tiff(head, data_off)
+        i = data_off + block_len
+    return {}
+
+
+def _parse_x3f(path: Path) -> dict[str, Any]:
+    """Sigma X3F (Foveon). Not TIFF — Sigma's own container.
+
+    Layout: 'FOVb' magic header, then a sequence of image/property/CAMF
+    sections, then a directory at the very end. The last 4 bytes of the
+    file are a little-endian uint32 directory offset; the directory
+    starts with 'SECd' followed by version + entry count + 12-byte entries
+    of (offset, length, type[4]). We're after entries of type 'IMA2',
+    which are SECi-wrapped JPEG previews containing the standard
+    APP1/Exif TIFF block.
+    """
+    try:
+        with open(path, "rb") as f:
+            f.seek(0)
+            head4 = f.read(4)
+            if head4 != b"FOVb":
+                return {}
+            f.seek(-4, 2)
+            dir_off = struct.unpack("<I", f.read(4))[0]
+            f.seek(dir_off)
+            dir_head = f.read(12)
+            if len(dir_head) < 12 or dir_head[:4] != b"SECd":
+                return {}
+            count = struct.unpack_from("<I", dir_head, 8)[0]
+            # Guard against absurd counts (12 bytes per entry).
+            if count <= 0 or count > 100:
+                return {}
+            entries_blob = f.read(count * 12)
+            if len(entries_blob) < count * 12:
+                return {}
+            # SECi header is 28 bytes: magic[4] + version[4] + type[4] +
+            # format[4] + columns[4] + rows[4] + rowsize[4]. format=18=JPEG.
+            for k in range(count):
+                e_off, e_len, e_type = struct.unpack_from(
+                    "<II4s", entries_blob, k * 12
+                )
+                if e_type != b"IMA2" or e_len < 32:
+                    continue
+                f.seek(e_off)
+                sec_head = f.read(28)
+                if len(sec_head) < 28 or sec_head[:4] != b"SECi":
+                    continue
+                fmt = struct.unpack_from("<I", sec_head, 12)[0]
+                if fmt != 18:  # not a JPEG-encoded thumbnail/preview
+                    continue
+                # Read the JPEG payload. We only need enough of it to walk
+                # past APP1/Exif; cap at 256 KB so large preview JPEGs
+                # don't balloon memory.
+                payload = f.read(min(e_len - 28, HEAD_SIZE))
+                tiff_off = _find_jpeg_exif_tiff(payload, 0)
+                if tiff_off is None:
+                    continue
+                return _parse_tiff(payload, tiff_off)
+    except OSError:
+        return {}
+    return {}
+
+
 def read_metadata(path: Path) -> dict[str, Any]:
     """Read standard EXIF metadata from a RAW file. Format-agnostic.
 
@@ -496,18 +659,29 @@ def read_metadata(path: Path) -> dict[str, Any]:
     typically: use whatever rawpy gave and move on.
     """
     suffix = path.suffix.lower()
-    # RAF: Fujifilm. 16-byte 'FUJIFILMCCD-RAW ' magic, then a version /
-    # camera string, then at offset 0x54 a uint32-BE pointer to the TIFF
-    # block. We just slurp the head and let _parse_tiff find the magic.
+    # RAF: Fujifilm. 16-byte 'FUJIFILMCCD-RAW ' magic, then version/camera
+    # strings, then at offset 0x54 a uint32-BE pointer to the *embedded
+    # JPEG preview* (not to a raw TIFF block — that's a docs trap we fell
+    # into). The EXIF lives inside that JPEG, in an APP1 segment whose
+    # payload starts with the literal "Exif\x00\x00" followed by a
+    # standard TIFF header. So we read 0x54..0x58, jump to the JPEG SOI,
+    # walk the segment list to the APP1/Exif segment, and parse the
+    # TIFF that begins 6 bytes into the APP1 payload.
     if suffix == ".raf":
         head = _read_file_head(path, HEAD_SIZE)
-        if len(head) < 0x60:
+        if len(head) < 0x58:
             return {}
-        # Pointer is at 0x54 in the RAF preamble.
-        tiff_off = int.from_bytes(head[0x54 : 0x58], "big")
-        if 0 < tiff_off < len(head):
-            return _parse_tiff(head, tiff_off)
-        return {}
+        jpeg_off = int.from_bytes(head[0x54 : 0x58], "big")
+        tiff_off = _find_jpeg_exif_tiff(head, jpeg_off)
+        if tiff_off is None:
+            return {}
+        return _parse_tiff(head, tiff_off)
+
+    if suffix == ".x3f":
+        return _parse_x3f(path)
+
+    if suffix == ".mrw":
+        return _parse_mrw(path)
 
     head = _read_file_head(path, HEAD_SIZE)
     if not head:
@@ -537,15 +711,58 @@ def read_metadata(path: Path) -> dict[str, Any]:
     # Even RW2's non-standard magic 0x55 is handled by _parse_tiff.
     if len(head) >= 4 and head[:2] in (b"II", b"MM"):
         result = _parse_tiff(head, 0)
-        if result:
-            return result
-        # Pillow's Pano DNGs (and any other TIFF where IFD0 is placed after
-        # the giant pixel payload, e.g. multi-shot Lightroom exports) can
-        # have IFD0 at an offset well beyond our 256 KB head buffer. Re-read
-        # the file using a wider window pointed at the IFD0 offset.
-        return _parse_tiff_with_offset_seek(path, head)
+        if not result:
+            # Pillow's Pano DNGs (and any other TIFF where IFD0 is placed
+            # after the giant pixel payload, e.g. multi-shot Lightroom
+            # exports) can have IFD0 at an offset well beyond our 256 KB
+            # head buffer. Re-read the file using a wider window pointed
+            # at the IFD0 offset.
+            result = _parse_tiff_with_offset_seek(path, head)
+        # XMP fallback for files that leave Make/Model out of IFD0 but
+        # write them into the XMP packet living in head (Leaf MOS does
+        # this). Apply only when the standard TIFF parse left a gap, so
+        # we never overwrite real IFD0 values.
+        _xmp_fill_missing(result, head)
+        return result
 
     return {}
+
+
+def _xmp_fill_missing(out: dict[str, Any], head: bytes) -> None:
+    """Pull tiff:Make / tiff:Model from an XMP packet embedded in head, but
+    only into keys the caller didn't already fill.
+
+    Tag-soup approach by design: full XML parsing is overkill for two
+    fixed-name elements, and an XML parser would also fail closed if the
+    packet has any minor malformation. The XMP block is bracketed by
+    <x:xmpmeta>...</x:xmpmeta> markers; we just find them, then look for
+    the two elements by literal name inside that slice.
+    """
+    if not out or ("Make" in out and "Model" in out):
+        # Skip the scan if both are already present (common case).
+        if "Make" in out and "Model" in out:
+            return
+    i = head.find(b"<x:xmpmeta")
+    if i < 0:
+        return
+    j = head.find(b"</x:xmpmeta>", i)
+    if j < 0:
+        return
+    xmp = head[i:j].decode("utf-8", "replace")
+    for tag, key in (("tiff:Make", "Make"), ("tiff:Model", "Model")):
+        if key in out:
+            continue
+        open_tag = "<" + tag + ">"
+        close_tag = "</" + tag + ">"
+        s = xmp.find(open_tag)
+        if s < 0:
+            continue
+        e = xmp.find(close_tag, s + len(open_tag))
+        if e < 0:
+            continue
+        value = xmp[s + len(open_tag) : e].strip()
+        if value:
+            out[key] = value
 
 
 def _parse_cmt_ifd(tiff_block: bytes, wanted: frozenset[int], kind: str) -> dict[str, Any]:
@@ -559,7 +776,7 @@ def _parse_cmt_ifd(tiff_block: bytes, wanted: frozenset[int], kind: str) -> dict
     if endian is None:
         return {}
     magic = struct.unpack_from(endian + "H", tiff_block, 2)[0]
-    if magic not in (0x002A, 0x0055):
+    if magic not in (0x002A, 0x0055, 0x4F52):
         return {}
     (ifd_off,) = struct.unpack_from(endian + "I", tiff_block, 4)
     raw = _read_ifd(tiff_block, ifd_off, endian, wanted)
@@ -603,7 +820,7 @@ def _parse_tiff_with_offset_seek(path: Path, head: bytes) -> dict[str, Any]:
     if endian is None:
         return {}
     magic = struct.unpack_from(endian + "H", head, 2)[0]
-    if magic not in (0x002A, 0x0055):
+    if magic not in (0x002A, 0x0055, 0x4F52):
         return {}
     (ifd0_off,) = struct.unpack_from(endian + "I", head, 4)
     if ifd0_off + 2 <= len(head):

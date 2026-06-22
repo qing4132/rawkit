@@ -329,8 +329,19 @@ def _augment_from_rawpy(rec: dict[str, Any], raw: Any) -> None:
         # the colon-separated 'YYYY:MM:DD HH:MM:SS' wire format exiftool
         # emits — the existing _normalize() expects that shape and rewrites
         # the date colons to dashes.
+        #
+        # Skip 1970 — LibRaw uses Unix epoch 0 as its "no DateTime found"
+        # sentinel and surfaces it as datetime.fromtimestamp(0), which after
+        # local-timezone conversion lands at 1970-01-01 HH:00 (HH = your UTC
+        # offset). Without filtering, files with no/corrupt date metadata
+        # land in user output as fake 1970 captures. Real raws are never
+        # from 1970 — digital photography started in the late 80s.
         ts = getattr(other, "timestamp", None)
-        if isinstance(ts, datetime) and "DateTimeOriginal" not in rec:
+        if (
+            isinstance(ts, datetime)
+            and "DateTimeOriginal" not in rec
+            and ts.year > 1970
+        ):
             rec["DateTimeOriginal"] = ts.strftime("%Y:%m:%d %H:%M:%S")
 
         iso = getattr(other, "iso_speed", 0) or 0

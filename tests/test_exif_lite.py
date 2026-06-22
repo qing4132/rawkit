@@ -478,16 +478,26 @@ def _sample_files() -> list[Path]:
     base = Path(os.environ.get("RAWKIT_TEST_SAMPLES", "samples"))
     if not base.is_dir():
         return []
+    # Source of truth: the same extension set the CLI accepts. Hard-coding
+    # a subset here would silently skip any new format the user (or our
+    # fetch_samples.py script) drops in — exactly the kind of coverage gap
+    # this test suite is meant to catch.
+    from rawkit.cli import RAW_EXTS
     raws: list[Path] = []
-    for ext in (".cr3", ".arw", ".dng", ".rw2", ".3fr", ".nef", ".raf"):
+    seen: set[Path] = set()
+    for ext in sorted(RAW_EXTS):
         # Sample at most 3 files per format to keep the suite snappy.
         # Sorted so the choice is deterministic across runs.
-        found = sorted(p for p in base.rglob(f"*{ext}"))[:3]
-        raws.extend(found)
+        for p in sorted(base.rglob(f"*{ext}"))[:3]:
+            if p not in seen:
+                seen.add(p)
+                raws.append(p)
         # Also try uppercase, since macOS HFS+ is case-insensitive but
         # the user's library may have mixed case.
-        found_upper = sorted(p for p in base.rglob(f"*{ext.upper()}"))[:3]
-        raws.extend(p for p in found_upper if p not in raws)
+        for p in sorted(base.rglob(f"*{ext.upper()}"))[:3]:
+            if p not in seen:
+                seen.add(p)
+                raws.append(p)
     return raws
 
 
