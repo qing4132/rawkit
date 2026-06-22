@@ -1647,6 +1647,22 @@ def organize(
     n_skipped = 0
     n_failed = 0
     verb_past = "copied" if copy else "moved"
+
+    # Cache maintenance: when the user has the EXIF cache (the default),
+    # every successful move re-keys its cached EXIF row to the new path
+    # and every successful copy clones it. Without this, the next
+    # `rawkit ls` would re-parse those RAWs as if they were brand new
+    # — wasting the cache benefit on exactly the moments we just touched
+    # the most files. Sidecar moves (XMP / JPG) hit no cache rows, so the
+    # update functions no-op for them by design.
+    #
+    # Skip the cache entirely on --dry-run (no real moves happened) and
+    # when the user opted out via `RAWKIT_NO_CACHE` / `rawkit cache disable`.
+    cache = None
+    if not dry_run:
+        from rawkit._cache import ExifCache
+        cache = ExifCache.open()
+
     for src, tgt in moves:
         # Source already at the target path (e.g., source==dest in-place
         # organize where this file is already in the right bucket).
@@ -1681,8 +1697,27 @@ def organize(
             n_failed += 1
             continue
 
+        # Keep the cache in sync with the move/copy that just succeeded.
+        # No-op for sidecars (XMP/JPG) — they were never in exif_cache.
+        # No-op when the cache is disabled.
+        if cache is not None:
+            try:
+                if copy:
+                    cache.duplicate(src, tgt)
+                else:
+                    cache.relocate(src, tgt)
+            except Exception:
+                # A cache failure must NEVER abort an organize operation
+                # that's already mutated the user's filesystem. Worst case
+                # the next `rawkit ls` re-parses the file — wasteful, not
+                # incorrect.
+                pass
+
         typer.echo(f"{verb_past}: {src.name} -> {tgt}", err=True)
         n_ok += 1
+
+    if cache is not None:
+        cache.close()
 
     summary_verb = "planned" if dry_run else verb_past
     typer.echo(
@@ -1943,3 +1978,157 @@ def reveal(
         except FileNotFoundError:
             typer.echo("rawkit reveal: osascript not found (macOS only)", err=True)
             raise typer.Exit(code=2)
+
+
+# --- cache subcommands ------------------------------------------------------
+#
+# `rawkit cache` is a thin admin surface for the on-disk EXIF cache. The
+# cache itself is *always* used automatically (on batches ≥ 50 files) — the
+# user only ever touches these commands to inspect, disable, clear, or GC.
+# This is deliberately a separate top-level command group so that
+# `rawkit ls`, `rawkit info`, etc., can never confuse cache-admin paths
+# with their normal path arguments.
+
+cache_app = typer.Typer(
+    help="Manage rawkit's EXIF cache (info / clear / vacuum / enable / disable).",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+
+def _human_bytes(n: int) -> str:
+    # Local helper: small enough that pulling in aggregate._bytes_human
+    # would add an import just for one call site here.
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024.0:
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024.0  # type: ignore[assignment]
+    return f"{n:.1f} PiB"
+
+
+@cache_app.command("info")
+def cache_info() -> None:
+    """Print where the cache lives, how big it is, and how many rows it holds."""
+    from rawkit._cache import ExifCache, _default_cache_path
+
+    # ignore_disabled=True: users still want to see the cache when it's
+    # been disabled — otherwise "rawkit cache info" would be useless
+    # exactly in the state most likely to need debugging.
+    path = _default_cache_path()
+    if not path.exists():
+        typer.echo(f"cache: not yet created (would live at {path})")
+        return
+    cache = ExifCache.open(ignore_disabled=True)
+    if cache is None:
+        # RAWKIT_NO_CACHE bypass, or the db is corrupted on disk.
+        if os.environ.get("RAWKIT_NO_CACHE"):
+            typer.echo("cache: disabled for this invocation (RAWKIT_NO_CACHE set)")
+            typer.echo(f"  on-disk file: {path}")
+        else:
+            typer.echo(f"cache: cannot open {path} (corrupted? try `rawkit cache clear`)")
+        return
+    try:
+        info = cache.info()
+    finally:
+        cache.close()
+    typer.echo(f"path:           {info['path']}")
+    typer.echo(f"schema version: {info['schema_version']}")
+    typer.echo(f"enabled:        {'yes' if info['enabled'] else 'no'}")
+    typer.echo(f"rows:           {info['row_count']:,}")
+    typer.echo(f"size on disk:   {_human_bytes(info['size_bytes'])}")
+    typer.echo(f"rawkit version: {info['rawkit_version']}")
+    typer.echo(f"created:        {info['created_at']}")
+    typer.echo(f"last vacuum:    {info['last_vacuum_at']}")
+
+
+@cache_app.command("clear")
+def cache_clear(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt.",
+    ),
+) -> None:
+    """Delete every cached EXIF record. Does NOT touch your RAW files."""
+    from rawkit._cache import ExifCache, _default_cache_path
+
+    path = _default_cache_path()
+    if not path.exists():
+        typer.echo("cache: nothing to clear (db not yet created)")
+        return
+    if not yes:
+        # Read from stdin only if it's a TTY; in scripts the user is
+        # expected to pass --yes (matches `gh`, `rm -i`, `aws`).
+        if not sys.stdin.isatty():
+            typer.echo(
+                "cache: refusing to clear without --yes (stdin is not a TTY)",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        answer = typer.prompt(
+            f"clear all EXIF cache rows at {path}? [y/N]",
+            default="n",
+            show_default=False,
+        )
+        if answer.strip().lower() not in ("y", "yes"):
+            typer.echo("cache: aborted")
+            raise typer.Exit(code=1)
+    cache = ExifCache.open(ignore_disabled=True)
+    if cache is None:
+        # If we can't open it, the safest bet is to just delete the file.
+        try:
+            path.unlink()
+        except OSError as e:
+            typer.echo(f"cache: failed to remove {path}: {e}", err=True)
+            raise typer.Exit(code=1)
+        typer.echo("cache: file removed")
+        return
+    try:
+        n = cache.clear()
+    finally:
+        cache.close()
+    typer.echo(f"cache: cleared {n:,} row(s)")
+
+
+@cache_app.command("vacuum")
+def cache_vacuum() -> None:
+    """Remove rows for files that no longer exist on disk, then reclaim space."""
+    from rawkit._cache import ExifCache, _default_cache_path
+
+    path = _default_cache_path()
+    if not path.exists():
+        typer.echo("cache: nothing to vacuum (db not yet created)")
+        return
+    cache = ExifCache.open(ignore_disabled=True)
+    if cache is None:
+        typer.echo(f"cache: cannot open {path}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        before = cache.info()["size_bytes"]
+        n = cache.vacuum()
+        after = cache.info()["size_bytes"]
+    finally:
+        cache.close()
+    typer.echo(
+        f"cache: removed {n:,} orphan row(s); "
+        f"size {_human_bytes(before)} -> {_human_bytes(after)}"
+    )
+
+
+@cache_app.command("enable")
+def cache_enable() -> None:
+    """Re-enable the cache (after a previous `rawkit cache disable`)."""
+    from rawkit._cache import ExifCache
+
+    ExifCache.set_enabled(True)
+    typer.echo("cache: enabled")
+
+
+@cache_app.command("disable")
+def cache_disable() -> None:
+    """Persistently disable the cache (across invocations) until `enable`."""
+    from rawkit._cache import ExifCache
+
+    ExifCache.set_enabled(False)
+    typer.echo("cache: disabled (persistent — `rawkit cache enable` to undo)")

@@ -153,53 +153,108 @@ def _batch_read_lite(paths_list: list[Path]) -> list[dict[str, Any]]:
     # stay snappy.
     import rawpy  # type: ignore
 
+    results: list[dict[str, Any] | None] = [None] * len(paths_list)
+
+    # --- Cache lookup (Stage 1) --------------------------------------------
+    # The cache turns "parse 38 k RAW files (~20 s)" into "stat 38 k files
+    # + one SQLite range read (~1.5 s)" when all files are unchanged. We
+    # skip it entirely for tiny batches where the bookkeeping overhead
+    # would exceed the parse it's supposed to avoid.
+    cache = None
+    miss_indices: list[int]
+    if len(paths_list) >= _PROGRESS_THRESHOLD:
+        # Local import: keeps `rawkit --help` from paying sqlite3's import
+        # cost (~3 ms) — small individually, but it accumulates across the
+        # ten-or-so commands that don't read EXIF at all.
+        from rawkit._cache import ExifCache
+        cache = ExifCache.open()
+        if cache is not None:
+            hits, miss_indices = cache.get_many(paths_list)
+            for i, rec in hits.items():
+                results[i] = rec
+        else:
+            miss_indices = list(range(len(paths_list)))
+    else:
+        miss_indices = list(range(len(paths_list)))
+
+    # --- Parse the misses (Stage 2) ----------------------------------------
+    miss_paths = [paths_list[i] for i in miss_indices]
+    miss_count = len(miss_paths)
+
     show_progress = (
-        len(paths_list) >= _PROGRESS_THRESHOLD
+        miss_count >= _PROGRESS_THRESHOLD
         and sys.stderr.isatty()
         and not os.environ.get("RAWKIT_NO_PROGRESS")
     )
 
     workers = _default_workers()
-    results: list[dict[str, Any] | None] = [None] * len(paths_list)
 
-    def work(i: int, path: Path) -> None:
-        results[i] = _normalize(_read_one_lite(path, rawpy))
+    def work(slot: int, path: Path) -> None:
+        results[slot] = _normalize(_read_one_lite(path, rawpy))
 
-    if show_progress:
-        # Local import so non-progress paths don't pay the rich.progress
-        # import cost (a few ms, but adds up across `rawkit --help`).
-        from rich.progress import (
-            Progress, SpinnerColumn, BarColumn, MofNCompleteColumn,
-            TextColumn, TimeRemainingColumn,
-        )
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]reading EXIF"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeRemainingColumn(),
-            transient=True,   # bar disappears on completion → no stderr noise
-        ) as progress:
-            task = progress.add_task("", total=len(paths_list))
+    if miss_count > 0:
+        if show_progress:
+            # Local import so non-progress paths don't pay the rich.progress
+            # import cost (a few ms, but adds up across `rawkit --help`).
+            from rich.console import Console
+            from rich.progress import (
+                Progress, SpinnerColumn, BarColumn, MofNCompleteColumn,
+                TextColumn, TaskProgressColumn,
+            )
+            # IMPORTANT: write to stderr, not the default stdout. Otherwise
+            # piping (`rawkit ls ... | head`) makes rich see a non-TTY stdout
+            # and suppress the bar entirely — even though stderr is still a
+            # terminal. We've already gated on stderr being a TTY above.
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold]reading EXIF"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TextColumn("•"),
+                # Percentage instead of TimeRemainingColumn: the rolling
+                # ETA estimate jitters badly when I/O is bursty (NAS, big
+                # DNGs interleaved with small CR3s) and the back-and-forth
+                # is more distracting than informative.
+                TaskProgressColumn(),
+                transient=True,   # bar disappears on completion → no stderr noise
+                console=Console(stderr=True),
+            ) as progress:
+                task = progress.add_task("", total=miss_count)
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    # We want per-finish progress updates, so submit + iterate
+                    # in completion order rather than pool.map (which would
+                    # only update in submission order at chunk granularity).
+                    from concurrent.futures import as_completed
+                    futures = {
+                        pool.submit(work, miss_indices[k], p): k
+                        for k, p in enumerate(miss_paths)
+                    }
+                    for fut in as_completed(futures):
+                        # Re-raise any exception that escaped work() (none do
+                        # by construction, but be defensive about future churn).
+                        fut.result()
+                        progress.update(task, advance=1)
+        else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                # We want per-finish progress updates, so submit + iterate
-                # in completion order rather than pool.map (which would
-                # only update in submission order at chunk granularity).
-                from concurrent.futures import as_completed
-                futures = {
-                    pool.submit(work, i, p): i
-                    for i, p in enumerate(paths_list)
-                }
-                for fut in as_completed(futures):
-                    # Re-raise any exception that escaped work() (none do
-                    # by construction, but be defensive about future churn).
-                    fut.result()
-                    progress.update(task, advance=1)
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            # consume the iterator so map() actually runs to completion
-            list(pool.map(lambda ip: work(ip[0], ip[1]), enumerate(paths_list)))
+                # consume the iterator so map() actually runs to completion
+                list(pool.map(
+                    lambda kp: work(miss_indices[kp[0]], kp[1]),
+                    enumerate(miss_paths),
+                ))
+
+    # --- Cache write-back (Stage 3) ----------------------------------------
+    # Only newly-parsed records get written. Records that came from a hit
+    # are already in the db (and would just rewrite themselves identically).
+    if cache is not None:
+        try:
+            to_put = [
+                (paths_list[i], results[i])
+                for i in miss_indices
+                if results[i] is not None
+            ]
+            cache.put_many(to_put)
+        finally:
+            cache.close()
 
     # The None-typed sentinel can't actually leak (work() always assigns),
     # but the type checker doesn't know that. Filter for safety.
