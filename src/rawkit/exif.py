@@ -85,13 +85,25 @@ def batch_read(paths: Iterable[Path]) -> list[dict[str, Any]]:
         return []
 
     require_exiftool()
+    # Pass paths via stdin using exiftool's `-@ -` argfile option instead of
+    # argv. A recursive scan over a large library easily produces tens of
+    # thousands of paths whose combined argv length exceeds the OS ARG_MAX
+    # (~256KB on macOS), at which point execve() fails with E2BIG before
+    # exiftool even starts. The argfile path has no such limit and preserves
+    # the "one fork for the whole batch" performance contract above.
     args = (
         ["exiftool", "-j", "-n"]
         + [f"-{tag}" for tag, _key in _FIELD_MAP if tag != "SourceFile"]
-        + ["--"]
-        + paths_list
+        + ["-@", "-"]
     )
-    proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    # `-@` treats every non-empty line as one argument with no shell quoting,
+    # so paths containing spaces (e.g. '/Volumes/T7 Shield/底片') work as-is.
+    # Newlines in filenames would corrupt the stream, but POSIX paths and
+    # macOS HFS+/APFS don't permit '\n' in filenames in practice.
+    stdin_data = "\n".join(paths_list) + "\n"
+    proc = subprocess.run(
+        args, input=stdin_data, capture_output=True, text=True, check=False
+    )
     # exiftool exits 1 when it emits warnings about individual files but
     # still produces valid JSON for the rest. Treat that as success.
     if proc.returncode not in (0, 1):
