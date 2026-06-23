@@ -101,7 +101,10 @@ batch_read(paths)              # exif.py 入口；按 RAWKIT_BACKEND env 分发
 |---|---|---|
 | ARW / NEF / ORF / PEF / IIQ / MOS / 普通 TIFF | `II/MM` magic + `0x002A` | 直接从 0 开始解 |
 | **RW2** (Panasonic) | `II` + `0x0055`（非标准 magic！） | 同上，magic 列表里加 `0x0055` |
-| **RAF** (Fujifilm) | `FUJIFILMCCD-RAW` 16 字节 | 偏移 `0x54` 处 BE-uint32 指向 TIFF |
+| **ORF** (Olympus) | `II` + `0x4F52`（'IIRO' 头，非标准 magic！） | 同上，magic 列表里加 `0x4F52` |
+| **RAF** (Fujifilm) | `FUJIFILMCCD-RAW` 16 字节 | 偏移 `0x54` 处 BE-uint32 指向**嵌入 JPEG 的 SOI**；走 JPEG 标记序列找 APP1/`Exif\0\0`，TIFF 紧跟其后 |
+| **MRW** (Minolta/KONICA MINOLTA) | `\x00MRM` + BE-uint32 长度 | 跳子块 (`\x00PRD`/`\x00WBG`/`\x00RIF`)，到 `\x00TTW` 块内即标准 TIFF |
+| **X3F** (Sigma Foveon) | `FOVb` + 版本 | 文件末 4 字节是 directory offset → `SECd` 目录里找 type=`IMA2` 的 `SECi` JPEG section，再 APP1/Exif |
 | DNG / 3FR | `II/MM` + `0x002A` | 同 TIFF；但 IFD0 是缩略图，raw 在 SubIFD |
 | **CR3** (Canon) | `....ftyp` (ISO BMFF) | 走 BMFF：`moov > uuid(85c0b687...) > CMT1/CMT2/CMT4` |
 

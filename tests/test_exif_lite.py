@@ -549,8 +549,19 @@ def test_lite_matches_exiftool_on_core_fields(monkeypatch) -> None:
     assert set(lite_recs) == set(exiftool_recs)
 
     mismatches: list[str] = []
+    # Fields that are non-negotiable: if exiftool has it, lite must also
+    # have it. Without this check, lite silently dropping a field would
+    # pass the equivalence test (the `key in lite` clause below would
+    # short-circuit). These are the keys real user --where queries lean
+    # on; a missing maker / model / date is a regression, not a tolerance.
+    REQUIRED_IF_EXIFTOOL_HAS = ("maker", "model", "date", "year", "month")
     for path, lite in lite_recs.items():
         et = exiftool_recs[path]
+        for key in REQUIRED_IF_EXIFTOOL_HAS:
+            if key in et and key not in lite:
+                mismatches.append(
+                    f"{path}: {key} missing from lite (exiftool has {et[key]!r})"
+                )
         for key in ("maker", "model", "lens", "iso", "orientation",
                     "flash", "gps", "date", "year", "month"):
             if key in et and key in lite and et[key] != lite[key]:

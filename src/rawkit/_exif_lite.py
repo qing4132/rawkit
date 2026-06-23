@@ -729,19 +729,22 @@ def read_metadata(path: Path) -> dict[str, Any]:
 
 
 def _xmp_fill_missing(out: dict[str, Any], head: bytes) -> None:
-    """Pull tiff:Make / tiff:Model from an XMP packet embedded in head, but
-    only into keys the caller didn't already fill.
+    """Pull tiff:Make / tiff:Model / exif:DateTimeOriginal from an XMP packet
+    embedded in head, but only into keys the caller didn't already fill.
 
-    Tag-soup approach by design: full XML parsing is overkill for two
+    Tag-soup approach by design: full XML parsing is overkill for three
     fixed-name elements, and an XML parser would also fail closed if the
     packet has any minor malformation. The XMP block is bracketed by
     <x:xmpmeta>...</x:xmpmeta> markers; we just find them, then look for
-    the two elements by literal name inside that slice.
+    each element by literal name inside that slice.
+
+    DateTimeOriginal note: XMP stores ISO 8601 ('2025-08-09T12:34:56Z' or
+    '...+09:00'); EXIF wire format wants colons in the date part
+    ('2025:08:09 12:34:56'). We strip the timezone and 'T' separator
+    to produce something _normalize() in exif.py understands.
     """
-    if not out or ("Make" in out and "Model" in out):
-        # Skip the scan if both are already present (common case).
-        if "Make" in out and "Model" in out:
-            return
+    if not out:
+        return
     i = head.find(b"<x:xmpmeta")
     if i < 0:
         return
@@ -749,20 +752,34 @@ def _xmp_fill_missing(out: dict[str, Any], head: bytes) -> None:
     if j < 0:
         return
     xmp = head[i:j].decode("utf-8", "replace")
-    for tag, key in (("tiff:Make", "Make"), ("tiff:Model", "Model")):
-        if key in out:
-            continue
-        open_tag = "<" + tag + ">"
-        close_tag = "</" + tag + ">"
+
+    def _pull(tag: str) -> str | None:
+        open_tag, close_tag = "<" + tag + ">", "</" + tag + ">"
         s = xmp.find(open_tag)
         if s < 0:
-            continue
+            return None
         e = xmp.find(close_tag, s + len(open_tag))
         if e < 0:
-            continue
-        value = xmp[s + len(open_tag) : e].strip()
-        if value:
-            out[key] = value
+            return None
+        v = xmp[s + len(open_tag) : e].strip()
+        return v or None
+
+    if "Make" not in out:
+        v = _pull("tiff:Make")
+        if v:
+            out["Make"] = v
+    if "Model" not in out:
+        v = _pull("tiff:Model")
+        if v:
+            out["Model"] = v
+    if "DateTimeOriginal" not in out:
+        v = _pull("exif:DateTimeOriginal")
+        if v and len(v) >= 19 and v[4] == "-" and v[7] == "-" and v[10] == "T":
+            # ISO 8601 'YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH:MM]' → EXIF wire
+            # 'YYYY:MM:DD HH:MM:SS' that _normalize() understands.
+            date = v[0:4] + ":" + v[5:7] + ":" + v[8:10]
+            time = v[11:19]  # HH:MM:SS, ignoring sub-second + timezone
+            out["DateTimeOriginal"] = date + " " + time
 
 
 def _parse_cmt_ifd(tiff_block: bytes, wanted: frozenset[int], kind: str) -> dict[str, Any]:
