@@ -152,3 +152,82 @@ camera   = "Minolta Alpha-7 Digital"
 license  = "CC0"
 source   = "raw.pixls.us"
 notes    = "Minolta — custom MRW header preamble before the TIFF block"
+
+# ----------------------------------------------------------------------------
+# 2022+ mainstream bodies — coverage density for the cameras people actually
+# shoot today (samples/ already has R5, A1, A7R IV, Z9, Z5II, X-E5, GFX100RF,
+# X2D, OM-5II, M11 Monochrom, GR III, DC-L10, iPhone 13 Pro). These add the
+# next-gen siblings whose firmware tends to drift EXIF layout the most.
+# ----------------------------------------------------------------------------
+
+[[file]]
+url      = "https://raw.pixls.us/data/Canon/Canon%20EOS%20R5m2/RAW.CR3"
+sha256   = "d6e6aa3b493ea8936dff0efb0cc17c87471437e7317bce37c8c82ba08b9cab7b"
+format   = "cr3"
+camera   = "Canon EOS R5 Mark II"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2024 flagship — new CR3 firmware lineage"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Canon/Canon%20EOS%20R6%20Mark%20III/IMG_4241.CR3"
+sha256   = "e491e4bb960961b5fa299361bf698310a80cbe7b15d30d8dad3bb21bc5457dab"
+format   = "cr3"
+camera   = "Canon EOS R6 Mark III"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2025 release — newest mainstream Canon body on the index"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Sony/ILCE-7RM5/7RM5-LosslessCompressedLarge.ARW"
+sha256   = "c294c388ad9bccbee169f87b9ceb661001515fb039d63f587dcabba76df5636d"
+format   = "arw"
+camera   = "Sony A7R V"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2022 high-resolution flagship; lossless-compressed variant"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Sony/ILCE-9M3/DSC00110.ARW"
+sha256   = "6645e8038b9f2c92ab8e27c8fc2258b23d2f99b397ea2e256ce35bddfa9a2078"
+format   = "arw"
+camera   = "Sony A9 III"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2024 — world's first full-frame global-shutter body"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Nikon/Z%208/Nikon_Z8_raw_14_bit_lossless_compression.NEF"
+sha256   = "c13a8675294456b9c979e6c1e556951654f35377b2870af2874bfb556f21ce40"
+format   = "nef"
+camera   = "Nikon Z 8"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2023 — Z9-class sensor in compact body; very popular"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Nikon/Z%20f/DSC_0040.NEF"
+sha256   = "83c82be0be8865d796096dfbcc8ef2abf5af1bd37db44dfad6715070b0c99d15"
+format   = "nef"
+camera   = "Nikon Zf"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2023 retro full-frame; different firmware branch from Z8/Z9"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Fujifilm/X-T5/DSCF0021.RAF"
+sha256   = "b2a067e7fda16338f15c2532caa12b238b2415dc1c75a96a6d24d3445cfd0ae3"
+format   = "raf"
+camera   = "Fujifilm X-T5"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2022 — X-Trans V (40MP) sensor; the mainstream X-T body"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Fujifilm/X100VI/DSCF0074.RAF"
+sha256   = "8e5e4d8d2e0a865ca79b3d40734b6abc2f4b00281afea8b9bd3d8c29808f2fb3"
+format   = "raf"
+camera   = "Fujifilm X100VI"
+license  = "CC0"
+source   = "raw.pixls.us"
+notes    = "2024 viral hit; fixed-lens X-Trans V"
