@@ -10,6 +10,13 @@ the speedup ratio. Designed to be run from the repo root.
 
 The same file list is fed to both backends so the comparison is apples-
 to-apples (no random sampling drift between runs).
+
+> When to run this:
+>   This is a *regression* tool, not part of the test pipeline. Run it
+>   when you suspect lite has gotten slower (refactor, new format branch,
+>   added per-file work) — it should stay >100× faster than exiftool on
+>   modern CR3 / ARW / NEF libraries. If the ratio drops below ~50×,
+>   profile what changed. Otherwise leave it alone.
 """
 
 from __future__ import annotations

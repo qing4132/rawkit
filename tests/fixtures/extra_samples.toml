@@ -1,164 +1,68 @@
-# Extra RAW samples manifest — formats not covered by samples/ in this repo.
+# Extra RAW samples manifest — formats / bodies not covered by samples/.
 #
-# rawkit's _exif_lite.py needs to handle every format in cli.RAW_EXTS (38).
-# samples/ ships ~8 formats (CR3/ARW/NEF/DNG/RAF/RW2/ORF/3FR). The remaining
-# ~30 formats are stress-tested by downloading public-domain or
-# permissively-licensed samples to samples/extras/ and running the existing
-# cross-backend equivalence tests against them:
+# samples/ ships the maintainer's own ~8 formats (CR3 / ARW / NEF / DNG /
+# RAF / RW2 / ORF / 3FR) from cameras they actually shoot. This manifest
+# downloads on-demand samples to samples/extras/ so cross-backend
+# equivalence tests (lite vs exiftool) can run against formats and bodies
+# the maintainer doesn't physically own.
 #
-#   uv run python scripts/fetch_samples.py
+# Run:
+#   uv run python scripts/fetch_samples.py            # mainstream tier only
+#   uv run python scripts/fetch_samples.py --legacy   # also pull legacy tier
 #   RAWKIT_TEST_SAMPLES=samples/extras uv run pytest tests/test_exif_lite.py -v
 #
-# Each entry is:
+# ----------------------------------------------------------------------------
+# Entry schema
+# ----------------------------------------------------------------------------
 #
 #   [[file]]
 #   url      = "https://..."          # direct, stable download URL
-#   sha256   = ""                     # leave empty on first add; fetch_samples.py
-#                                     # will print the observed hash so you can fill it in
+#   sha256   = ""                     # empty on first add; fetch_samples.py
+#                                     # prints observed hash for you to paste back
 #   format   = "cr2"                  # lowercase extension (without dot)
-#   camera   = "Canon EOS 5D Mark II" # for the report — what camera produced it
-#   license  = "CC0"                  # one of: CC0, CC-BY, CC-BY-SA, public-domain,
-#                                     # "raw.pixls.us-CC0", etc. Must be redistributable
-#                                     # OR fetched fresh each time (we don't redistribute).
-#   source   = "raw.pixls.us"         # human label for the source
-#   notes    = ""                     # optional: edge case this sample exercises
+#   camera   = "Canon EOS 40D"        # what produced this file
+#   license  = "CC0"                  # CC0 / CC-BY / CC-BY-SA / public-domain
+#   source   = "raw.pixls.us"         # human-readable source label
+#   tier     = "mainstream"           # "mainstream" or "legacy" — see below
+#   notes    = ""                     # optional: what this sample stress-tests
 #
 # Hash-empty workflow (nix/bazel style):
-#   1. Add a new [[file]] with sha256 = ""
-#   2. Run fetch_samples.py — it downloads, computes sha256, prints it, and
-#      keeps the file (warning that the hash is unverified).
-#   3. Copy the printed sha256 back into this manifest. Re-run to verify.
+#   1. Add [[file]] with sha256 = ""
+#   2. Run fetch_samples.py — it downloads, computes sha256, prints it
+#   3. Paste the printed hash back into the manifest, re-run to verify
 #
-# Suggested sources (vetted, long-lived, redistributable):
-#   * raw.pixls.us           — CC0, ~700 samples covering most modern cameras
-#                              <https://raw.pixls.us/>
-#   * LibRaw/raw-samples     — LibRaw maintainer's reference set on GitHub
-#                              <https://github.com/LibRaw/raw-samples>
-#   * rawsamples.ch          — personal-non-commercial license (read carefully)
-#                              <https://www.rawsamples.ch/>
-#   * Wikimedia Commons      — CC0/CC-BY, limited RAW selection
+# ----------------------------------------------------------------------------
+# Tier semantics
+# ----------------------------------------------------------------------------
 #
-# Priority formats to cover (in order of real-world prevalence):
-#   1. cr2  — Canon 2004–2018 (5D classic, 6D, 7D, etc.) — *huge* user base
-#   2. x3f  — Sigma Foveon, very weird sensor & file layout
-#   3. pef  — Pentax current bodies (K-1, K-3)
-#   4. nrw  — Nikon compacts
-#   5. iiq  — Phase One medium format (large files; exercise windowed reads)
-#   6. srw  — Samsung NX series (discontinued but stock survives)
-#   7. crw  — Canon legacy pre-2004 (very different from CR2)
-#   8. rwl  — Leica selected bodies
-#   9. mef / mos — Mamiya / Leaf
-#   10. erf — Epson
+# tier = "mainstream"
+#   Cameras / formats with meaningful user base in 2026: 2022+ flagships and
+#   the few still-active legacy formats (Canon CR2 → huge installed base,
+#   Phase One IIQ → professional medium format, Pentax PEF → only remaining
+#   Pentax-branded RAW). Pulled by default.
 #
-# Manifest entries below. Start empty; fill in as samples are vetted.
-# Each entry is a TOML [[file]] table.
-
-# ----------------------------------------------------------------------------
-# Manifest entries — one per RAW format that samples/ doesn't already cover.
-# Sources: raw.pixls.us (CC0 community sample collection, browsable Apache
-# autoindex at /data/<Make>/<Model>/<file>).
+# tier = "legacy"
+#   Discontinued or near-dead lineages kept as "lite must not crash on these"
+#   regression samples — but not worth optimising new code for. Examples:
+#   Samsung NX (left market 2015), Minolta MRW (2006), Epson R-D1 (2007),
+#   Leaf MOS, early Nikon Coolpix NRW, Canon CRW (pre-2004), Sigma Foveon
+#   X3F (no new bodies since 2014). Pulled only with --legacy.
 #
-# On first `fetch_samples.py` run, sha256 fields are empty; the script
-# downloads the file, computes the hash, and prints it — paste it back
-# here and re-run to pin.
-# ----------------------------------------------------------------------------
+# A note on Sigma X3F / Minolta MRW: their custom container parsers were
+# removed from _exif_lite.py (2026-06-23) — these formats fall through to
+# the rawpy fallback path, slow but correct. They are intentionally NOT
+# in this manifest anymore.
+#
+# Sources used here:
+#   * raw.pixls.us  — CC0 community samples, browsable Apache autoindex
+#                     at /data/<Make>/<Model>/<file>
 
-[[file]]
-url      = "https://raw.pixls.us/data/Canon/EOS%2040D/_MG_0153.CR2"
-sha256   = "775c806358fedddec7622113a5e399a3330bd5a65e35e37ae1108d8bf58067be"
-format   = "cr2"
-camera   = "Canon EOS 40D"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Canon 2004-2018 era CR2 — huge installed base"
 
-[[file]]
-url      = "https://raw.pixls.us/data/Canon/Canon%20PowerShot%20A610/IMG_1574.CRW"
-sha256   = "4e75887580221ebca582f80b2caf15a177fa42e5e0b47ec1ce7b7c97ebc38318"
-format   = "crw"
-camera   = "Canon PowerShot A610"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Canon legacy pre-CR2 format — different magic and structure"
+# ============================================================================
+# Mainstream tier — pulled by default
+# ============================================================================
 
-[[file]]
-url      = "https://raw.pixls.us/data/Sigma/DP1%20Merrill/SDIM0555.X3F"
-sha256   = "1392ea8149f8643e2654e4d0e3e79ea02a37fc6e7cf9209129718a357cad1d68"
-format   = "x3f"
-camera   = "Sigma DP1 Merrill"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Foveon 3-layer sensor; X3F is its own container, not TIFF"
-
-[[file]]
-url      = "https://raw.pixls.us/data/PENTAX/PENTAX%20K-r/IMGP4424.PEF"
-sha256   = "dd0d7b76d89039995d253adddcfb44d131414fad2179610d9ea4d8d4bb876b7b"
-format   = "pef"
-camera   = "Pentax K-r"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Pentax — TIFF-shaped but with private maker-note layout"
-
-[[file]]
-url      = "https://raw.pixls.us/data/NIKON%20CORPORATION/COOLPIX%20P1100/DSCN0173.NRW"
-sha256   = "706840f7a36c3852092d4aad0465e75920e04f1aa653adf31626c0c05ab41258"
-format   = "nrw"
-camera   = "Nikon Coolpix P1100"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Nikon compact format — NEF-like but with its own quirks"
-
-[[file]]
-url      = "https://raw.pixls.us/data/Samsung/EX1/SAM_5548.SRW"
-sha256   = "a084890fd9d7995ceb746c18ecf5be48c95baf14286d5c0c480cc3daa25f3e37"
-format   = "srw"
-camera   = "Samsung EX1"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Samsung NX series — discontinued line but stock survives"
-
-[[file]]
-url      = "https://raw.pixls.us/data/Phase%20One/IQ3%20100MP/Phase_One_IQ3_100MP_IIQ_S.IIQ"
-sha256   = "2dd56f2a7a57a7fc2123301009c1a7a10be002ed84a18470fc4d37e41760a66d"
-format   = "iiq"
-camera   = "Phase One IQ3 100MP"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Medium format; large file (~69 MB) exercises windowed reads"
-
-[[file]]
-url      = "https://raw.pixls.us/data/Epson/R-D1s/EPSN3575.ERF"
-sha256   = "45bb0081baf1c813c7cd9e05b3e6ae734b90aba408dd1195118dc94dc6abbbb9"
-format   = "erf"
-camera   = "Epson R-D1s"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Epson rangefinder — TIFF-shaped"
-
-[[file]]
-url      = "https://raw.pixls.us/data/Leaf/Aptus%2022/L_003172.mos"
-sha256   = "8a1a101cb3940b0648af54a721d92e6fb8612dd29a0909036ea2753196a00ec2"
-format   = "mos"
-camera   = "Leaf Aptus 22"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Leaf medium-format back — MOS container"
-
-[[file]]
-url      = "https://raw.pixls.us/data/Minolta/ALPHA-7%20DIGITAL/PICT6107.MRW"
-sha256   = "f655f60d24e492cd2b8c46ac8bfd24f83d7696b49cdf2301ffd4f34857216248"
-format   = "mrw"
-camera   = "Minolta Alpha-7 Digital"
-license  = "CC0"
-source   = "raw.pixls.us"
-notes    = "Minolta — custom MRW header preamble before the TIFF block"
-
-# ----------------------------------------------------------------------------
-# 2022+ mainstream bodies — coverage density for the cameras people actually
-# shoot today (samples/ already has R5, A1, A7R IV, Z9, Z5II, X-E5, GFX100RF,
-# X2D, OM-5II, M11 Monochrom, GR III, DC-L10, iPhone 13 Pro). These add the
-# next-gen siblings whose firmware tends to drift EXIF layout the most.
-# ----------------------------------------------------------------------------
+# ---- 2022+ flagship bodies that samples/ doesn't already cover --------------
 
 [[file]]
 url      = "https://raw.pixls.us/data/Canon/Canon%20EOS%20R5m2/RAW.CR3"
@@ -167,6 +71,7 @@ format   = "cr3"
 camera   = "Canon EOS R5 Mark II"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2024 flagship — new CR3 firmware lineage"
 
 [[file]]
@@ -176,6 +81,7 @@ format   = "cr3"
 camera   = "Canon EOS R6 Mark III"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2025 release — newest mainstream Canon body on the index"
 
 [[file]]
@@ -185,6 +91,7 @@ format   = "arw"
 camera   = "Sony A7R V"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2022 high-resolution flagship; lossless-compressed variant"
 
 [[file]]
@@ -194,6 +101,7 @@ format   = "arw"
 camera   = "Sony A9 III"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2024 — world's first full-frame global-shutter body"
 
 [[file]]
@@ -203,6 +111,7 @@ format   = "nef"
 camera   = "Nikon Z 8"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2023 — Z9-class sensor in compact body; very popular"
 
 [[file]]
@@ -212,6 +121,7 @@ format   = "nef"
 camera   = "Nikon Zf"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2023 retro full-frame; different firmware branch from Z8/Z9"
 
 [[file]]
@@ -221,6 +131,7 @@ format   = "raf"
 camera   = "Fujifilm X-T5"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2022 — X-Trans V (40MP) sensor; the mainstream X-T body"
 
 [[file]]
@@ -230,4 +141,92 @@ format   = "raf"
 camera   = "Fujifilm X100VI"
 license  = "CC0"
 source   = "raw.pixls.us"
+tier     = "mainstream"
 notes    = "2024 viral hit; fixed-lens X-Trans V"
+
+# ---- Still-relevant formats / lineages samples/ doesn't have ----------------
+
+[[file]]
+url      = "https://raw.pixls.us/data/Canon/EOS%2040D/_MG_0153.CR2"
+sha256   = "775c806358fedddec7622113a5e399a3330bd5a65e35e37ae1108d8bf58067be"
+format   = "cr2"
+camera   = "Canon EOS 40D"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "mainstream"
+notes    = "Canon 2004-2018 era CR2 — huge installed base"
+
+[[file]]
+url      = "https://raw.pixls.us/data/PENTAX/PENTAX%20K-r/IMGP4424.PEF"
+sha256   = "dd0d7b76d89039995d253adddcfb44d131414fad2179610d9ea4d8d4bb876b7b"
+format   = "pef"
+camera   = "Pentax K-r"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "mainstream"
+notes    = "Pentax PEF — only living Pentax-branded RAW (K-3 III still in production)"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Phase%20One/IQ3%20100MP/Phase_One_IQ3_100MP_IIQ_S.IIQ"
+sha256   = "2dd56f2a7a57a7fc2123301009c1a7a10be002ed84a18470fc4d37e41760a66d"
+format   = "iiq"
+camera   = "Phase One IQ3 100MP"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "mainstream"
+notes    = "Medium format; thumbnail in IFD0 + raw dims in ExifImageWidth"
+
+
+# ============================================================================
+# Legacy tier — kept as "must not crash" regression samples, --legacy to pull
+# ============================================================================
+
+[[file]]
+url      = "https://raw.pixls.us/data/Canon/Canon%20PowerShot%20A610/IMG_1574.CRW"
+sha256   = "4e75887580221ebca582f80b2caf15a177fa42e5e0b47ec1ce7b7c97ebc38318"
+format   = "crw"
+camera   = "Canon PowerShot A610"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "legacy"
+notes    = "Canon pre-2004 — different magic and structure"
+
+[[file]]
+url      = "https://raw.pixls.us/data/NIKON%20CORPORATION/COOLPIX%20P1100/DSCN0173.NRW"
+sha256   = "706840f7a36c3852092d4aad0465e75920e04f1aa653adf31626c0c05ab41258"
+format   = "nrw"
+camera   = "Nikon Coolpix P1100"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "legacy"
+notes    = "Nikon compact RAW — NEF-like but with its own quirks"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Samsung/EX1/SAM_5548.SRW"
+sha256   = "a084890fd9d7995ceb746c18ecf5be48c95baf14286d5c0c480cc3daa25f3e37"
+format   = "srw"
+camera   = "Samsung EX1"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "legacy"
+notes    = "Samsung NX series — discontinued line (left market 2015)"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Epson/R-D1s/EPSN3575.ERF"
+sha256   = "45bb0081baf1c813c7cd9e05b3e6ae734b90aba408dd1195118dc94dc6abbbb9"
+format   = "erf"
+camera   = "Epson R-D1s"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "legacy"
+notes    = "Epson rangefinder — TIFF-shaped, one-off product (2007)"
+
+[[file]]
+url      = "https://raw.pixls.us/data/Leaf/Aptus%2022/L_003172.mos"
+sha256   = "8a1a101cb3940b0648af54a721d92e6fb8612dd29a0909036ea2753196a00ec2"
+format   = "mos"
+camera   = "Leaf Aptus 22"
+license  = "CC0"
+source   = "raw.pixls.us"
+tier     = "legacy"
+notes    = "Leaf back — Make/Model/DateTime only in XMP packet; exercises _xmp_fill_missing"

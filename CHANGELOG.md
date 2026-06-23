@@ -1151,6 +1151,10 @@ if isinstance(subsec, (str, int)):
 
 ## 8. "新方案下我们免费/极低成本能额外得到什么"
 
+> ⚠️ **状态(2026-06-23 复核)**:此节是 PERF-FIX 落地当天列的"顺手可做"
+> 灵感清单。复核后:已落地的标 ✅;真正想做的迁去 [TODO.md](TODO.md);
+> 不打算做的标 ⏸。**当前章节本身不再当 TODO 读** —— 看 TODO.md。
+
 这是一个意外大丰收的部分。把 rawpy 踢出热路径后，**它仍然可用**
 （fallback 路径 + 我们可以在专用命令里主动用它），所以 rawpy 提供的所有
 LibRaw 数据现在是**按需可调用**的资源，而不是无脑被调用。
@@ -1159,76 +1163,71 @@ LibRaw 数据现在是**按需可调用**的资源，而不是无脑被调用。
 
 新 `_exif_lite` 现在已经在解，原 exiftool 路径也有，但没在 CLI 暴露：
 
-- **LensMake** —— 已经在 record 里，可以加 `--where lens_make=='Canon'` 滤镜
-- **完整 EXIF Orientation 值**（不只是 portrait/landscape）—— 旋转方向 1/3/6/8 已经有了
-- **ExposureCompensation**（曝光补偿数值）—— 已经在 record，可以筛 `--where bias < -0.5`
-- **SubSecTimeOriginal** —— 修了 bug 后，亚秒级 burst 排序终于稳定了
+- ⏸ **LensMake** —— record 已有，未暴露 DSL(`--where lens_make=='Canon'`)。条目在 TODO.md
+- ✅ **完整 EXIF Orientation 值** —— `_libraw_flip_to_exif_orientation` 已映射 1/3/6/8;`_normalize` 折成 portrait/landscape 二元供 DSL 用
+- ⏸ **ExposureCompensation** —— record 字段 `bias` 已存,DSL 未暴露。TODO.md
+- ✅ **SubSecTimeOriginal** —— bug 已修,亚秒精度稳定
 
 ### 8.2 几乎零成本能加的（rawpy fallback 路径里 LibRaw 已经在算）
 
 LibRaw 打开文件时**顺手**算出的字段，我们目前没存：
 
-| LibRaw 字段 | rawkit 用途建议 | 实现成本 |
-|---|---|---|
-| `raw.color_desc` (b'RGBG') | RGGB vs Foveon (X3F) 区分 | 1 行 |
-| `raw.color_matrix` (3×4 float) | 显示厂商色彩矩阵 / 估算色温偏好 | 5 行 |
-| `raw.camera_whitebalance` / `daylight_whitebalance` | 显示拍摄时白平衡设定 | 3 行 |
-| `raw.black_level_per_channel` | 暗角校正质量判断 | 2 行 |
-| `raw.lens.min_focal` / `max_focal` | **定焦 vs 变焦自动识别**（min==max → 定焦） | 5 行 |
-| `raw.lens.eff_max_aperture` | 镜头实际最大光圈（vs 标称值） | 2 行 |
-| `raw.sizes.raw_width` / `raw_height` (vs `width`/`height`) | 区分 sensor 像素 vs demosaic 输出（裁切边界） | 2 行 |
-| `raw.tone_curve` | 厂商色调曲线（高级用户可视化） | 5 行 |
-| `raw.num_colors` (3 or 4) | Foveon X3 vs Bayer | 1 行 |
-
-只要在 fallback path 里把这些字段也塞进 record（或在 `rawkit info` 时**主动**
-打开一次 rawpy 把这些字段补全），就免费拿到。
+| LibRaw 字段 | rawkit 用途建议 | 实现成本 | 状态 |
+|---|---|---|---|
+| `raw.color_desc` (b'RGBG') | RGGB vs Foveon (X3F) 区分 | 1 行 | ⏸ 价值低,X3F 已退场 |
+| `raw.color_matrix` (3×4 float) | 显示厂商色彩矩阵 / 估算色温偏好 | 5 行 | ⏸ 用户场景不清 |
+| `raw.camera_whitebalance` / `daylight_whitebalance` | 显示拍摄时白平衡设定 | 3 行 | ⏸ TODO.md(`info` 增强) |
+| `raw.black_level_per_channel` | 暗角校正质量判断 | 2 行 | ⏸ 工作流外 |
+| `raw.lens.min_focal` / `max_focal` | **定焦 vs 变焦自动识别** | 5 行 | ⏸ **值得**,见 TODO.md |
+| `raw.lens.eff_max_aperture` | 镜头实际最大光圈 | 2 行 | ⏸ TODO.md |
+| `raw.sizes.raw_width` / `raw_height` vs `width`/`height` | 区分 sensor vs demosaic 维度 | 2 行 | ⏸ 工作流外 |
+| `raw.tone_curve` | 厂商色调曲线 | 5 行 | ⏸ GUI 工具的事 |
+| `raw.num_colors` (3 or 4) | Foveon vs Bayer | 1 行 | ⏸ X3F 已退场 |
 
 ### 8.3 我们的 TIFF parser 已经走过的数据，能再榨
 
 `_read_ifd_windowed` 和 `_walk_bmff` 是通用的，可以加：
 
-- **Canon CMT3 (MakerNote)** —— 已经被 `_walk_bmff` 路过，没 parse。
-  里面有：Canon AF point 选择、对焦距离估计、按下快门时的图像稳定状态、闪光灯类型……
-  代价：写几个 Canon makernote sub-tag 解码（lclevy 文档已有）。
-- **Sony SR2/MRW makernote** —— 同上路径
-- **PreviewImage 偏移 + 长度** —— IFD0:0x0111 / 0x0117。可以**不解码 JPEG**
-  就拿到 preview 字节范围 → `rawkit extract` 不再需要 rawpy.extract\_thumb
-  （省 ~300 ms/file）
-- **Thumbnail dimensions** —— 已经被 `_resolve_dimensions` 路过（IFD0
-  那对 ImageWidth/Height 在 DNG/3FR 上正好是缩略图维度），可以在 fallback
-  分一列出来。
+- ⏸ **Canon CMT3 (MakerNote)** —— 已被 `_walk_bmff` 路过,没 parse。AF 点 / 对焦距离 / IS 状态 / 闪光等。**先不做** — 是 Canon-only 特例,违背"格式中立"。
+- ⏸ **Sony SR2/MRW makernote** —— 同上
+- ⭐ **PreviewImage 偏移 + 长度** (IFD0:0x0111 / 0x0117) —— **`extract` 不再需要 rawpy.extract_thumb,~60× 加速**。**值得做**,见 TODO.md
+- ⏸ **Thumbnail dimensions** —— `_resolve_dimensions` 已用上了它,但没单独暴露。低价值
 
 ### 8.4 性能解锁的新场景
 
-之前因为太慢、没人会做的操作，现在变得可行：
+之前因为太慢、没人会做的操作,现在变得可行:
 
-- **`rawkit watch`**（文件夹 inotify 实时刷新元数据）—— lite ~0.5 ms/file，每秒能扫 2000 张
-- **`rawkit dedupe`**（按 DateTimeOriginal + SubSec 找完全重复的连拍）—— 几秒钟扫全库
-- **`rawkit health`**（巡检整库找：损坏 / 缺 GPS / 缺 lens info 的文件）—— 几秒完成
-- **`rawkit aggregate by_camera --year 2024`**（按机身/镜头切片统计）—— 不再是分钟级，秒级
-- **本地交互式 TUI**（`rawkit tui`）—— 启动时整库索引 < 30s，可以做实时过滤
+- ⏸ **`rawkit watch`** —— 违背 [TODO.md](TODO.md) "stateless" 红线,**永久拒绝**
+- ⏸ **`rawkit dedupe`** —— TODO.md "deferred" 段已记
+- ⏸ **`rawkit health`** —— 跟 `verify` 重叠,TODO.md 留 `verify`
+- ✅ **`rawkit aggregate by_camera --year 2024`** —— 已经秒级
+- ⏸ **`rawkit tui`** —— TODO.md "permanently rejected" 段(CLI-first)
 
 ### 8.5 测试基础设施红利
 
 `tests/test_exif_lite.py` 里的 `_build_tiff()` 合成器（~50 行）可以复用于：
 
-- 给 `extract` / `info` 命令写"病态文件"测试
-- mock 出"无 Make"、"超大 IFD"、"循环 SubIFD" 等边界
-- 把 cross-backend equivalence test 推广到更多字段（lens_make / preview_size / …）
+- ✅ 给 `extract` / `info` 命令写"病态文件"测试 —— 部分用在 cache 测试里
+- ✅ mock 出"无 Make"、"超大 IFD"、"循环 SubIFD" 等边界 —— 已有 corrupted-file 测试
+- ⏸ 把 cross-backend equivalence test 推广到更多字段(lens_make / preview_size / …) —— 待 8.1/8.3 落地后顺带做
 
 ---
 
 ## 9. 风险与未覆盖
 
-诚实清单：
+> ⚠️ **状态(2026-06-23 复核)**:1–3 项的"没真样本测试"假设已被推翻 ——
+> 后续(同日章节)`samples/extras/` 加了 11 个主流 + 5 个 legacy 真样本,
+> NEF/CR2/A7R V/A9 III 全直接走 lite 不需 fallback。本节保留作历史。
 
-1. **NEF (Nikon)** —— PERF.md 里提过，我们的 ARW/DNG 走通了，NEF 大概率也行（同 TIFF 结构），
-   但**没有真样本测试**。第一次有用户报 NEF 问题，去仓库 issue。
-2. **加密 Sony ARW**（部分 a7R IV 之后机型）—— LibRaw 能解，我们的 TIFF parser
-   会拿到 Make/Model 但 ExifIFD 加密块解不出。**fallback 会触发**，慢但能用。
-3. **CR2** (老 Canon) —— CR3 走通；CR2 是普通 TIFF，应当走 `_parse_tiff()` 默认路径。
-   同样没真样本测试。
-4. **truly weird files**（HDR 多帧、视频帧抓取等）—— fallback 救场。
+诚实清单（**已过时**）：
+
+1. ~~**NEF (Nikon)** —— PERF.md 里提过,我们的 ARW/DNG 走通了,NEF 大概率也行(同 TIFF 结构),但**没有真样本测试**。~~
+   ✅ 现已覆盖 Z9 / Z5 II / Z8 / Zf 四台,跨后端 PASS。
+2. ~~**加密 Sony ARW**(部分 a7R IV 之后机型)—— ExifIFD 加密块解不出,fallback 会触发,慢但能用。~~
+   ✅ A7R V / A9 III 在 samples/extras 内,**直接走 lite 不触发 fallback**。猜想中的"加密块"在测试覆盖的机型上不成立。
+3. ~~**CR2** (老 Canon)—— 同样没真样本测试。~~
+   ✅ EOS 40D 已在 samples/extras,跨后端 PASS。
+4. **truly weird files**（HDR 多帧、视频帧抓取等）—— fallback 救场。仍成立。
 
 任何字段疑似不对，**第一招永远是**：
 
@@ -1270,7 +1269,11 @@ RAWKIT_BACKEND=exiftool rawkit ls /path/to/file.cr3
 
 # 性能调研:为什么慢、瓶颈在哪、能换什么
 
-> 2026-06-22 的一次讨论记录,留作后续优化依据。结论尚未落地到代码。
+> 2026-06-22 的一次讨论记录,留作后续优化依据。
+>
+> ⚠️ **状态(2026-06-23 复核):本章节是早晨的调研笔记,所有结论已在
+> 上面"EXIF 后端重写"(130×)和"EXIF 缓存"(24×)两章节落地。保留本节
+> 仅作历史溯源用 — 不要把它当 TODO 读。**
 
 ## 问题
 

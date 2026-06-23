@@ -561,90 +561,6 @@ def _find_jpeg_exif_tiff(buf: bytes, jpeg_off: int) -> int | None:
     return None
 
 
-def _parse_mrw(path: Path) -> dict[str, Any]:
-    """Minolta MRW (KONICA MINOLTA / late Minolta DSLRs).
-
-    Container layout: 4-byte magic '\\x00MRM' + big-endian uint32 total
-    length, then a sequence of named sub-blocks where each block tag is
-    4 bytes: a leading 0x00 followed by 3 ASCII letters (e.g. '\\x00PRD',
-    '\\x00WBG', '\\x00RIF', '\\x00TTW'). After the tag comes a big-endian
-    uint32 length + that many bytes of payload. The '\\x00TTW' block
-    payload is a self-contained standard TIFF that holds the EXIF —
-    once we find it, we can hand it to _parse_tiff.
-    """
-    head = _read_file_head(path, HEAD_SIZE)
-    if len(head) < 8 or head[:4] != b"\x00MRM":
-        return {}
-    i = 8  # first sub-block starts right after the 8-byte file header
-    end = len(head)
-    while i + 8 <= end:
-        name = head[i : i + 4]
-        block_len = int.from_bytes(head[i + 4 : i + 8], "big")
-        data_off = i + 8
-        if name == b"\x00TTW":
-            return _parse_tiff(head, data_off)
-        i = data_off + block_len
-    return {}
-
-
-def _parse_x3f(path: Path) -> dict[str, Any]:
-    """Sigma X3F (Foveon). Not TIFF — Sigma's own container.
-
-    Layout: 'FOVb' magic header, then a sequence of image/property/CAMF
-    sections, then a directory at the very end. The last 4 bytes of the
-    file are a little-endian uint32 directory offset; the directory
-    starts with 'SECd' followed by version + entry count + 12-byte entries
-    of (offset, length, type[4]). We're after entries of type 'IMA2',
-    which are SECi-wrapped JPEG previews containing the standard
-    APP1/Exif TIFF block.
-    """
-    try:
-        with open(path, "rb") as f:
-            f.seek(0)
-            head4 = f.read(4)
-            if head4 != b"FOVb":
-                return {}
-            f.seek(-4, 2)
-            dir_off = struct.unpack("<I", f.read(4))[0]
-            f.seek(dir_off)
-            dir_head = f.read(12)
-            if len(dir_head) < 12 or dir_head[:4] != b"SECd":
-                return {}
-            count = struct.unpack_from("<I", dir_head, 8)[0]
-            # Guard against absurd counts (12 bytes per entry).
-            if count <= 0 or count > 100:
-                return {}
-            entries_blob = f.read(count * 12)
-            if len(entries_blob) < count * 12:
-                return {}
-            # SECi header is 28 bytes: magic[4] + version[4] + type[4] +
-            # format[4] + columns[4] + rows[4] + rowsize[4]. format=18=JPEG.
-            for k in range(count):
-                e_off, e_len, e_type = struct.unpack_from(
-                    "<II4s", entries_blob, k * 12
-                )
-                if e_type != b"IMA2" or e_len < 32:
-                    continue
-                f.seek(e_off)
-                sec_head = f.read(28)
-                if len(sec_head) < 28 or sec_head[:4] != b"SECi":
-                    continue
-                fmt = struct.unpack_from("<I", sec_head, 12)[0]
-                if fmt != 18:  # not a JPEG-encoded thumbnail/preview
-                    continue
-                # Read the JPEG payload. We only need enough of it to walk
-                # past APP1/Exif; cap at 256 KB so large preview JPEGs
-                # don't balloon memory.
-                payload = f.read(min(e_len - 28, HEAD_SIZE))
-                tiff_off = _find_jpeg_exif_tiff(payload, 0)
-                if tiff_off is None:
-                    continue
-                return _parse_tiff(payload, tiff_off)
-    except OSError:
-        return {}
-    return {}
-
-
 def read_metadata(path: Path) -> dict[str, Any]:
     """Read standard EXIF metadata from a RAW file. Format-agnostic.
 
@@ -676,12 +592,6 @@ def read_metadata(path: Path) -> dict[str, Any]:
         if tiff_off is None:
             return {}
         return _parse_tiff(head, tiff_off)
-
-    if suffix == ".x3f":
-        return _parse_x3f(path)
-
-    if suffix == ".mrw":
-        return _parse_mrw(path)
 
     head = _read_file_head(path, HEAD_SIZE)
     if not head:

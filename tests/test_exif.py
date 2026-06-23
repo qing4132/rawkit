@@ -1,20 +1,25 @@
-"""Tests for rawkit.exif (the EXIF backend dispatcher + normalizer).
+"""Tests for the exiftool backend + the `_normalize` post-processor.
 
-The tests in this file fall in two buckets:
+> Backend context (2026-06-23): the default EXIF backend is `lite` (the
+> pure-stdlib TIFF/CR3 parser, see [src/rawkit/_exif_lite.py]). This file
+> covers the **exiftool fallback path** plus the format-agnostic
+> `_normalize` step both backends pump through.
+>
+> The lite parser's own tests are in [tests/test_exif_lite.py].
 
-  1. Normalizer / exiftool-backend tests (most of the file). These mock
-     out subprocess.run, so they're independent of any real RAW file or
-     exiftool install. They exercise:
-       * the `_FIELD_MAP` → rawkit-key collapse
-       * the datetime/date/time split and SubSec stitching
-       * orientation / flash / gps / model-prefix derivations
-     A module-level autouse fixture pins these onto the exiftool backend
-     (`RAWKIT_BACKEND=exiftool`) so the dispatcher routes there even though
-     the default is `lite`.
+All tests here mock out `subprocess.run`, so they don't need exiftool to
+be installed and don't touch any real RAW file. They exercise:
 
-  2. Lite-backend tests (`test_lite_*`). These exercise the rawpy +
-     _exif_lite path with real RAW samples when available — and the
-     cross-backend equivalence tests pit lite vs exiftool record-for-record.
+  * the `_FIELD_MAP` → rawkit-key collapse
+  * the datetime / date / time split and SubSec stitching
+  * orientation / flash / gps / model-prefix derivations
+  * APEX-aperture fallback when EXIF:FNumber is missing
+  * MakerNotes-pollution guards (Pentax ISO 13, Leica M11M FNumber 1.0)
+
+A module-level autouse fixture pins these onto the exiftool backend
+(`RAWKIT_BACKEND=exiftool`) so the dispatcher routes there even though
+the default is `lite`. Without that fixture, the subprocess mocks
+wouldn't hit anything — the lite path doesn't call subprocess at all.
 """
 
 from __future__ import annotations

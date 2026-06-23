@@ -467,102 +467,133 @@ def _normalize(record: dict[str, Any]) -> dict[str, Any]:
                     continue
             out[key] = value
 
-    # datetime / date / time three-field split.
-    # exiftool returns 'YYYY:MM:DD HH:MM:SS' (legacy EXIF format with colons in
-    # the date part). We expose three string fields so DSL queries can target
-    # the precision the user actually means:
-    #   datetime = 'YYYY-MM-DD HH:MM:SS[.NNN]'  (full, lexicographically sortable)
-    #   date     = 'YYYY-MM-DD'                 (calendar day)
-    #   time     = 'HH:MM:SS[.NNN]'             (time of day; sub-second when available)
-    #
-    # SubSecTimeOriginal — when the camera writes it — adds the fractional part
-    # so burst frames within the same second sort in the correct order even
-    # after the user renames the files.
-    dt = out.get("datetime")
-    subsec = out.pop("_subsec_raw", None)
-    if isinstance(dt, str) and len(dt) >= 19 and dt[4] == ":" and dt[7] == ":":
-        normalized = dt[:4] + "-" + dt[5:7] + "-" + dt[8:]
-        # exiftool returns SubSecTimeOriginal as a string when the underlying
-        # EXIF tag is ASCII (most cameras) but as an int in `-n` mode when
-        # the value happens to be all digits. The lite backend always returns
-        # str. Accept both so neither path silently drops sub-second precision.
-        subsec_str: str | None = None
-        if isinstance(subsec, str) and subsec.strip():
-            subsec_str = subsec.strip()
-        elif isinstance(subsec, int):
-            subsec_str = str(subsec)
-        suffix = ("." + subsec_str) if subsec_str else ""
-        out["datetime"] = normalized + suffix
-        out["date"] = normalized[:10]
-        out["time"] = normalized[11:19] + suffix
-
-    # Derived integer bucket fields. These are independent of the
-    # datetime/date/time strings and let --where DSL do bucket-by-bucket
-    # comparisons (`hour>=18`, `month==11`, `year>=2024`). Semantics:
-    # they are integer bucket IDs, not time cutoffs — `hour > 6` ≡
-    # `hour >= 7`, NOT "after 06:00:00". Use `time > "06:00:00"` for
-    # the cutoff form.
-    if isinstance(out.get("date"), str) and len(out["date"]) >= 10:
-        try:
-            out["year"]  = int(out["date"][0:4])
-            out["month"] = int(out["date"][5:7])
-            out["day"]   = int(out["date"][8:10])
-        except ValueError:
-            pass
-    if isinstance(out.get("time"), str) and len(out["time"]) >= 2:
-        try:
-            out["hour"] = int(out["time"][0:2])
-        except ValueError:
-            pass
-
-    # Aperture fallback: if EXIF:FNumber wasn't written (Leica M11M and
-    # similar minimalist DNGs only write APEX ApertureValue), reconstruct
-    # f-number from APEX.  N = 2^(av/2).  av=2 → f/2; av=4 → f/4.
-    apex = out.pop("_apex_raw", None)
-    if "fnumber" not in out and apex is not None:
-        try:
-            out["fnumber"] = round(2.0 ** (float(apex) / 2.0), 1)
-        except (TypeError, ValueError):
-            pass
-
-    raw_o = out.pop("_orientation_raw", None)
-    if raw_o is not None:
-        try:
-            o = int(raw_o)
-            if o in (5, 6, 7, 8):
-                out["orientation"] = "portrait"
-            elif o in (1, 2, 3, 4):
-                out["orientation"] = "landscape"
-        except (TypeError, ValueError):
-            pass
-
-    raw_f = out.pop("_flash_raw", None)
-    if raw_f is not None:
-        try:
-            out["flash"] = bool(int(raw_f) & 1)
-        except (TypeError, ValueError):
-            pass
-
-    # Strip the redundant maker prefix from `model`. Canon/Nikon/Leica/Ricoh
-    # all write `model` as `"<MAKER> <body>"` (Canon's "Canon EOS R5", Nikon's
-    # "NIKON Z5_2", Leica's "LEICA M11 Monochrom"). We already expose `maker`
-    # separately, so repeating it just bloats the model column in `ls`.
-    # Sony / Fuji / OM / Hasselblad don't add the prefix, so they're untouched.
-    model = out.get("model")
-    maker = out.get("maker")
-    if isinstance(model, str) and isinstance(maker, str) and maker:
-        prefix = maker.split()[0] if maker.split() else ""
-        if prefix:
-            pfx_with_space = (prefix + " ").upper()
-            if model.upper().startswith(pfx_with_space):
-                stripped = model[len(prefix):].lstrip()
-                if stripped:  # don't reduce model to empty string
-                    out["model"] = stripped
+    _split_datetime(out, out.pop("_subsec_raw", None))
+    _derive_date_time_buckets(out)
+    _apply_apex_aperture_fallback(out, out.pop("_apex_raw", None))
+    _classify_orientation(out, out.pop("_orientation_raw", None))
+    _decode_flash(out, out.pop("_flash_raw", None))
+    _strip_maker_prefix_from_model(out)
 
     if "gps_lat" in out and "gps_lon" in out:
         out["gps"] = True
 
     return out
+
+
+def _split_datetime(out: dict[str, Any], subsec: Any) -> None:
+    """Split `DateTimeOriginal` ('YYYY:MM:DD HH:MM:SS') into `datetime`/`date`/
+    `time` strings, stitching in `SubSecTimeOriginal` when the camera wrote it.
+
+    We expose all three so DSL queries can target the precision the user
+    actually means:
+      datetime = 'YYYY-MM-DD HH:MM:SS[.NNN]'   (full, lexicographically sortable)
+      date     = 'YYYY-MM-DD'                  (calendar day)
+      time     = 'HH:MM:SS[.NNN]'              (time of day; sub-second when present)
+
+    SubSec stitching matters because burst frames within the same second
+    only sort correctly when the fractional part survives.
+    """
+    dt = out.get("datetime")
+    if not (isinstance(dt, str) and len(dt) >= 19 and dt[4] == ":" and dt[7] == ":"):
+        return
+    normalized = dt[:4] + "-" + dt[5:7] + "-" + dt[8:]
+    # exiftool returns SubSecTimeOriginal as str for the ASCII case (most
+    # cameras) and as int in `-n` mode when the value is all digits. The
+    # lite backend always returns str. Accept both.
+    subsec_str: str | None = None
+    if isinstance(subsec, str) and subsec.strip():
+        subsec_str = subsec.strip()
+    elif isinstance(subsec, int):
+        subsec_str = str(subsec)
+    suffix = ("." + subsec_str) if subsec_str else ""
+    out["datetime"] = normalized + suffix
+    out["date"] = normalized[:10]
+    out["time"] = normalized[11:19] + suffix
+
+
+def _derive_date_time_buckets(out: dict[str, Any]) -> None:
+    """Add integer bucket fields `year`/`month`/`day`/`hour` from the
+    derived date/time strings, for DSL comparisons like `month==11` or
+    `hour>=18`. These are bucket IDs, not time cutoffs — `hour > 6`
+    means hour>=7, NOT 'after 06:00:00' (use `time > "06:00:00"` for that).
+    """
+    date = out.get("date")
+    if isinstance(date, str) and len(date) >= 10:
+        try:
+            out["year"]  = int(date[0:4])
+            out["month"] = int(date[5:7])
+            out["day"]   = int(date[8:10])
+        except ValueError:
+            pass
+    time_str = out.get("time")
+    if isinstance(time_str, str) and len(time_str) >= 2:
+        try:
+            out["hour"] = int(time_str[0:2])
+        except ValueError:
+            pass
+
+
+def _apply_apex_aperture_fallback(out: dict[str, Any], apex_raw: Any) -> None:
+    """When EXIF:FNumber is absent (Leica M11M and similar minimalist DNGs
+    only write APEX ApertureValue), reconstruct f-number from APEX:
+    N = 2^(av/2) — av=2 → f/2; av=4 → f/4.
+    """
+    if "fnumber" in out or apex_raw is None:
+        return
+    try:
+        out["fnumber"] = round(2.0 ** (float(apex_raw) / 2.0), 1)
+    except (TypeError, ValueError):
+        pass
+
+
+def _classify_orientation(out: dict[str, Any], raw: Any) -> None:
+    """Collapse EXIF Orientation 1..8 into a coarse `portrait`/`landscape`
+    label for the DSL (`--where orientation=='portrait'`). 1..4 are upright
+    variants → landscape; 5..8 are 90°-rotated variants → portrait.
+    """
+    if raw is None:
+        return
+    try:
+        o = int(raw)
+    except (TypeError, ValueError):
+        return
+    if o in (5, 6, 7, 8):
+        out["orientation"] = "portrait"
+    elif o in (1, 2, 3, 4):
+        out["orientation"] = "landscape"
+
+
+def _decode_flash(out: dict[str, Any], raw: Any) -> None:
+    """EXIF Flash is a bitfield; bit 0 = 'flash fired'. We only expose the
+    boolean — anyone needing the rest of the bits (red-eye mode, return
+    detection, etc.) should call exiftool directly.
+    """
+    if raw is None:
+        return
+    try:
+        out["flash"] = bool(int(raw) & 1)
+    except (TypeError, ValueError):
+        pass
+
+
+def _strip_maker_prefix_from_model(out: dict[str, Any]) -> None:
+    """Canon/Nikon/Leica/Ricoh write Model as `"<MAKER> <body>"` ('Canon EOS R5',
+    'NIKON Z5_2', 'LEICA M11 Monochrom'). We already expose `maker` separately,
+    so repeating the maker bloats the model column in `ls`. Sony / Fuji / OM /
+    Hasselblad don't add the prefix, so they're untouched.
+    """
+    model = out.get("model")
+    maker = out.get("maker")
+    if not (isinstance(model, str) and isinstance(maker, str) and maker):
+        return
+    prefix = maker.split()[0] if maker.split() else ""
+    if not prefix:
+        return
+    pfx_with_space = (prefix + " ").upper()
+    if model.upper().startswith(pfx_with_space):
+        stripped = model[len(prefix):].lstrip()
+        if stripped:  # don't reduce model to empty string
+            out["model"] = stripped
 
 
 # --- typer-friendly error wrapper -------------------------------------------

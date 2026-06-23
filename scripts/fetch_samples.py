@@ -59,6 +59,7 @@ class Entry:
     camera: str
     license: str
     source: str
+    tier: str
     notes: str
 
     @property
@@ -89,6 +90,9 @@ def load_manifest(path: Path) -> list[Entry]:
                 camera=str(raw.get("camera", "")).strip(),
                 license=str(raw.get("license", "")).strip(),
                 source=str(raw.get("source", "")).strip(),
+                # tier defaults to 'mainstream' so older manifest entries that
+                # predate the field don't silently get reclassified to legacy.
+                tier=str(raw.get("tier", "mainstream")).strip().lower(),
                 notes=str(raw.get("notes", "")).strip(),
             ))
         except KeyError as e:
@@ -201,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dest", type=Path, default=DEFAULT_DEST)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--skip-verify", action="store_true")
+    ap.add_argument(
+        "--legacy",
+        action="store_true",
+        help="also pull tier='legacy' entries (discontinued / dead-end formats "
+             "kept as 'lite must not crash' regression samples). Default off.",
+    )
     args = ap.parse_args(argv)
 
     if not args.manifest.exists():
@@ -216,10 +226,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    args.dest.mkdir(parents=True, exist_ok=True)
+    if not args.legacy:
+        skipped = [e for e in entries if e.tier == "legacy"]
+        entries = [e for e in entries if e.tier != "legacy"]
+        if skipped:
+            print(
+                f"skipping {len(skipped)} legacy entr{'y' if len(skipped) == 1 else 'ies'} "
+                f"(pass --legacy to include): "
+                + ", ".join(f"{e.format}/{e.camera}" for e in skipped[:6])
+                + (" ..." if len(skipped) > 6 else "")
+            )
+
+    # Quick preview before any network I/O so the user sees what's about to
+    # happen — useful when the manifest grows or you forget --legacy.
     print(f"manifest: {args.manifest}")
     print(f"dest:     {args.dest}")
-    print(f"entries:  {len(entries)}\n")
+    print("to pull:  " + ", ".join(
+        f"{e.format}({e.camera})" for e in entries[:8]
+    ) + (" ..." if len(entries) > 8 else ""))
+    print(f"count:    {len(entries)}\n")
+
+    args.dest.mkdir(parents=True, exist_ok=True)
 
     results: list[tuple[Entry, str]] = []
     for i, entry in enumerate(entries, 1):
